@@ -120,7 +120,6 @@ function Copy-ToQemu {
     
     # Criar estrutura UEFI
     New-Item -ItemType Directory -Path "$distPath\EFI\BOOT" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$distPath\initfs\bin" -Force | Out-Null
     
     # Copiar bootloader
     $bootloader = Join-Path $script:ProjectRoot "ignite\target\x86_64-unknown-uefi\$Profile\ignite.efi"
@@ -142,11 +141,15 @@ function Copy-ToQemu {
         return $false
     }
     
-    # Copiar init
+    # Criar InitFS (arquivo único com init dentro)
+    Write-Host "`n📦 Criando InitFS..." -ForegroundColor Yellow
+    
     $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$Profile\init"
     if (Test-Path $init) {
-        Copy-Item $init "$distPath\initfs\bin\init" -Force
-        Write-Host "  ✓ Init copiado" -ForegroundColor Green
+        # Por enquanto, copiar init diretamente como initfs
+        # TODO: Criar imagem FAT32 real com init dentro
+        Copy-Item $init "$distPath\initfs" -Force
+        Write-Host "  ✓ InitFS criado (init binário)" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Init não encontrado: $init" -ForegroundColor Red
         return $false
