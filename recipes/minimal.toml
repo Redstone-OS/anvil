@@ -1,0 +1,40 @@
+# Receita: Minimal
+
+[recipe]
+name = "minimal"
+description = "Sistema mínimo do Redstone OS (kernel + init)"
+version = "1.0.0"
+author = "Redstone OS Team"
+
+[components]
+kernel = { enabled = true, features = [] }
+bootloader = { enabled = true, timeout = 0 }
+init = { enabled = true, type = "simple" }
+shell = { enabled = false }
+gui = { enabled = false }
+
+[drivers]
+# Apenas drivers essenciais
+essential = ["serial"]
+optional = []
+
+[userspace]
+# Apenas init
+coreutils = []
+sysutils = []
+netutils = []
+
+[services]
+enabled = []
+
+[config]
+hostname = "redstone-minimal"
+timezone = "UTC"
+
+[build]
+profile = "release"
+optimization = "z"  # Otimizar para tamanho
+lto = true
+strip = true
+
+# TODO(prioridade=média, versão=v2.0): Adicionar mais opções

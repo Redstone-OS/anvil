@@ -1,0 +1,25 @@
+[package]
+name = "anvil"
+version = "1.0.0"
+edition = "2024"
+authors = ["Redstone OS Team"]
+description = "Anvil - Sistema de build do Redstone OS (A bigorna onde forjamos o sistema)"
+
+[[bin]]
+name = "anvil"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive", "color"] }
+xshell = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+colored = "2.0"
+indicatif = "0.17"
+tar = "0.4"
+
+# TODO(prioridade=média, versão=v2.0): Adicionar mais dependências
+# - rayon - Build paralelo
+# - walkdir - Busca de arquivos
+# - sha2 - Cache/hashing

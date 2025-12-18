@@ -1,0 +1,39 @@
+# Receita: Desktop
+
+[recipe]
+name = "desktop"
+description = "Redstone OS Desktop Edition"
+version = "1.0.0"
+author = "Redstone OS Team"
+
+[components]
+kernel = { enabled = true, features = ["acpi", "vfs", "net"] }
+bootloader = { enabled = true, timeout = 5 }
+init = { enabled = true, type = "systemd-like" }
+shell = { enabled = true, type = "bash" }
+gui = { enabled = true, compositor = "aurora" }
+
+[drivers]
+essential = ["ps2", "serial", "vga", "ahci"]
+optional = ["e1000", "rtl8139", "xhci"]
+
+[userspace]
+coreutils = ["ls", "cat", "cp", "mv", "rm", "mkdir", "chmod", "grep", "echo"]
+sysutils = ["ps", "top", "mount", "df", "free"]
+netutils = ["ping", "wget"]
+
+[services]
+enabled = ["getty", "networkd", "sshd"]
+
+[config]
+hostname = "redstone-desktop"
+timezone = "America/Sao_Paulo"
+locale = "pt_BR.UTF-8"
+
+[build]
+profile = "release"
+optimization = 2
+lto = true
+strip = false
+
+# TODO(prioridade=baixa, versão=v2.0): Adicionar mais aplicações desktop
