@@ -141,15 +141,38 @@ function Copy-ToQemu {
         return $false
     }
     
-    # Criar InitFS (arquivo único com init dentro)
-    Write-Host "`n📦 Criando InitFS..." -ForegroundColor Yellow
+    # Criar InitRAMFS (arquivo único com init dentro)
+    Write-Host "`n📦 Criando InitRAMFS..." -ForegroundColor Yellow
+    
+    # Criar estrutura initramfs/
+    $initramfsPath = Join-Path $script:ProjectRoot "initramfs"
+    New-Item -ItemType Directory -Path "$initramfsPath\bin" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\dev" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\proc" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\sys" -Force | Out-Null
     
     $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$Profile\init"
     if (Test-Path $init) {
-        # Por enquanto, copiar init diretamente como initfs
-        # TODO: Criar imagem FAT32 real com init dentro
-        Copy-Item $init "$distPath\initfs" -Force
-        Write-Host "  ✓ InitFS criado (init binário)" -ForegroundColor Green
+        # Copiar init para /bin/init (não /sbin/init)
+        Copy-Item $init "$initramfsPath\bin\init" -Force
+        Write-Host "  ✓ /bin/init copiado" -ForegroundColor Green
+        
+        # Criar TAR usando WSL
+        Write-Host "  📦 Criando initramfs.tar..." -ForegroundColor Yellow
+        
+        # Converter paths para WSL
+        $wslInitramfsPath = "/mnt/" + $initramfsPath.Replace(":\", "/").Replace("\", "/").ToLower()
+        $wslDistPath = "/mnt/" + $distPath.Replace(":\", "/").Replace("\", "/").ToLower()
+        
+        wsl tar -cf "$wslDistPath/initramfs.tar" -C "$wslInitramfsPath" . 2>$null
+        
+        if ($LASTEXITCODE -eq 0) {
+            $tarSize = (Get-Item "$distPath\initramfs.tar").Length
+            Write-Host "  ✓ initramfs.tar criado ($([math]::Round($tarSize/1024, 2)) KB)" -ForegroundColor Green
+        } else {
+            Write-Host "  ✗ Falha ao criar TAR (WSL necessário)" -ForegroundColor Red
+            return $false
+        }
     } else {
         Write-Host "  ✗ Init não encontrado: $init" -ForegroundColor Red
         return $false
