@@ -121,14 +121,35 @@ function Copy-ToQemu {
     # Criar estrutura UEFI
     New-Item -ItemType Directory -Path "$distPath\EFI\BOOT" -Force | Out-Null
     
-    # Copiar bootloader
+    # Copiar bootloader (Ignite)
     $bootloader = Join-Path $script:ProjectRoot "ignite\target\x86_64-unknown-uefi\$Profile\ignite.efi"
     if (Test-Path $bootloader) {
         Copy-Item $bootloader "$distPath\EFI\BOOT\BOOTX64.EFI" -Force
-        Write-Host "  ✓ Bootloader copiado" -ForegroundColor Green
+        Write-Host "  ✓ Bootloader copiado (BOOTX64.EFI)" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Bootloader não encontrado: $bootloader" -ForegroundColor Red
         return $false
+    }
+
+    # Copiar UEFI Shell (Rescue/Fallback)
+    # Procura em anvil/assets/shellx64.efi
+    $shellSource = Join-Path $script:ProjectRoot "anvil\assets\shellx64.efi"
+    if (Test-Path $shellSource) {
+        Copy-Item $shellSource "$distPath\EFI\BOOT\shellx64.efi" -Force
+        Write-Host "  ✓ UEFI Shell copiado (Rescue)" -ForegroundColor Green
+    } else {
+        Write-Host "  ! UEFI Shell não encontrado em assets. Fallback de recuperação indisponível." -ForegroundColor Yellow
+        Write-Host "    (Esperado em: $shellSource)" -ForegroundColor DarkGray
+    }
+
+    # Copiar Configuração (ignite.cfg)
+    # Procura em anvil/assets/ignite.cfg
+    $configSource = Join-Path $script:ProjectRoot "anvil\assets\ignite.cfg"
+    if (Test-Path $configSource) {
+        Copy-Item $configSource "$distPath\ignite.cfg" -Force
+        Write-Host "  ✓ Configuração copiada (ignite.cfg)" -ForegroundColor Green
+    } else {
+        Write-Host "  ! Configuração não encontrada em assets. Usando defaults embutidos." -ForegroundColor Yellow
     }
     
     # TODO(RFS): No futuro, quando o RFS estiver implementado,
