@@ -131,11 +131,16 @@ function Copy-ToQemu {
         return $false
     }
     
+    # TODO(RFS): No futuro, quando o RFS estiver implementado,
+    # esses arquivos deverão ser movidos para a partição RFS e não ficar na partição de boot (ESP).
+    # Por enquanto, mantemos tudo na ESP (FAT32) para facilitar o boot.
+    New-Item -ItemType Directory -Path "$distPath\boot" -Force | Out-Null
+
     # Copiar kernel
     $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-unknown-none\$Profile\forge"
     if (Test-Path $kernel) {
-        Copy-Item $kernel "$distPath\forge" -Force
-        Write-Host "  ✓ Kernel copiado" -ForegroundColor Green
+        Copy-Item $kernel "$distPath\boot\kernel" -Force
+        Write-Host "  ✓ Kernel copiado para boot/kernel" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Kernel não encontrado: $kernel" -ForegroundColor Red
         return $false
@@ -164,11 +169,11 @@ function Copy-ToQemu {
         $wslInitramfsPath = "/mnt/" + $initramfsPath.Replace(":\", "/").Replace("\", "/").ToLower()
         $wslDistPath = "/mnt/" + $distPath.Replace(":\", "/").Replace("\", "/").ToLower()
         
-        wsl tar -cf "$wslDistPath/initramfs.tar" -C "$wslInitramfsPath" . 2>$null
+        wsl tar -cf "$wslDistPath/boot/initfs" -C "$wslInitramfsPath" . 2>$null
         
         if ($LASTEXITCODE -eq 0) {
-            $tarSize = (Get-Item "$distPath\initramfs.tar").Length
-            Write-Host "  ✓ initramfs.tar criado ($([math]::Round($tarSize/1024, 2)) KB)" -ForegroundColor Green
+            $tarSize = (Get-Item "$distPath\boot\initfs").Length
+            Write-Host "  ✓ initfs criado em boot/initfs ($([math]::Round($tarSize/1024, 2)) KB)" -ForegroundColor Green
         } else {
             Write-Host "  ✗ Falha ao criar TAR (WSL necessário)" -ForegroundColor Red
             return $false
@@ -190,8 +195,8 @@ while ($true) {
     Clear-Host
     Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║                                        ║" -ForegroundColor Cyan
-    Write-Host "║      🔨 Anvil - Redstone OS 🔨        ║" -ForegroundColor Cyan
-    Write-Host "║   A bigorna onde forjamos o sistema   ║" -ForegroundColor Cyan
+    Write-Host "║      🔨 Anvil - Redstone OS 🔨         ║" -ForegroundColor Cyan
+    Write-Host "║   A bigorna onde forjamos o sistema    ║" -ForegroundColor Cyan
     Write-Host "║                                        ║" -ForegroundColor Cyan
     Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
