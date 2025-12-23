@@ -52,16 +52,32 @@ function Build-Component {
     Push-Location (Join-Path $script:ProjectRoot $Path)
     
     try {
-        if ($Profile -eq "release") {
-            cargo build --release --target $Target
-        } else {
-            cargo build --target $Target
+        # CORRECAO: Kernel (Forge) usa .cargo/config.toml com target customizado x86_64-redstone.json
+        # Nao devemos passar --target explicitamente para ele, senao ignora o config.toml
+        if ($Name -eq "Kernel") {
+            # Build sem --target, deixa .cargo/config.toml definir (x86_64-redstone.json)
+            if ($Profile -eq "release") {
+                cargo build --release
+            }
+            else {
+                cargo build
+            }
+        }
+        else {
+            # Outros componentes usam target explicito
+            if ($Profile -eq "release") {
+                cargo build --release --target $Target
+            }
+            else {
+                cargo build --target $Target
+            }
         }
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  ✓ $Name OK" -ForegroundColor Green
             return $true
-        } else {
+        }
+        else {
             Write-Host "  ✗ $Name falhou" -ForegroundColor Red
             return $false
         }
@@ -158,7 +174,9 @@ function Copy-ToQemu {
     New-Item -ItemType Directory -Path "$distPath\boot" -Force | Out-Null
 
     # Copiar kernel
-    $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-unknown-none\$Profile\forge"
+    # CORREÇÃO: Kernel agora usa target customizado x86_64-redstone definido em .cargo/config.toml
+    # O caminho correto é forge/target/x86_64-redstone/[profile]/forge
+    $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-redstone\$Profile\forge"
     if (Test-Path $kernel) {
         Copy-Item $kernel "$distPath\boot\kernel" -Force
         Write-Host "  ✓ Kernel copiado para boot/kernel" -ForegroundColor Green
