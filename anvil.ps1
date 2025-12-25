@@ -13,9 +13,9 @@ $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 $script:Services = @(
     @{ Name = "init"; Path = "services\init" }
     @{ Name = "console"; Path = "services\console" }
-    @{ Name = "devmgr"; Path = "services\devmgr" }
+    @{ Name = "devices"; Path = "services\devices" }
     @{ Name = "vfs"; Path = "services\vfs" }
-    @{ Name = "logd"; Path = "services\logd" }
+    @{ Name = "logger"; Path = "services\logger" }
 )
 
 # --- Funções Utilitárias ---
@@ -149,24 +149,23 @@ path = "/system/core/init"
 restart = "never"
 depends = []
 
-# Futuros serviços:
 # [console]
 # path = "/system/services/console"
 # restart = "always"
 # depends = []
 
-# [devmgr]
-# path = "/system/services/devmgr"
+# [devices]
+# path = "/system/services/devices"
 # restart = "always"
 # depends = ["console"]
 
 # [vfs]
 # path = "/system/services/vfs"
 # restart = "on-failure"
-# depends = ["devmgr"]
+# depends = ["devices"]
 
-# [logd]
-# path = "/system/services/logd"
+# [logger]
+# path = "/system/services/logger"
 # restart = "always"
 # depends = []
 "@
@@ -228,7 +227,7 @@ function Copy-ToQemu {
     # InitRAMFS
     Write-Host "`n📦 Criando InitRAMFS..." -ForegroundColor Yellow
     
-    $initramfsPath = Join-Path $script:ProjectRoot "initramfs"
+    $initramfsPath = Join-Path $script:ProjectRoot "anvil\assets\initramfs"
     
     # Limpar e recriar estrutura
     if (Test-Path $initramfsPath) {
@@ -353,6 +352,10 @@ function Clean-All {
         "forge\target",
         "ignite\target",
         "services\init\target",
+        "services\console\target",
+        "services\devices\target",
+        "services\vfs\target",
+        "services\logger\target",
         "dist\qemu"
     )
     
