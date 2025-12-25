@@ -3,7 +3,17 @@
 
 $ErrorActionPreference = "Stop"
 $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
-$script:AnvilPath = Join-Path $script:ProjectRoot "anvil\target\release\anvil.exe"
+
+# --- Configuração ---
+
+# Serviços a compilar (ordem de dependência)
+$script:Services = @(
+    @{ Name = "init"; Path = "services\init" }
+    @{ Name = "console"; Path = "services\console" }
+    @{ Name = "devmgr"; Path = "services\devmgr" }
+    @{ Name = "vfs"; Path = "services\vfs" }
+    @{ Name = "logd"; Path = "services\logd" }
+)
 
 # --- Funções Utilitárias ---
 
@@ -45,30 +55,24 @@ function Build-Component {
         [string]$Name,
         [string]$Path,
         [string]$Target,
-        [string]$Profile = "debug"
+        [string]$Profile = "release"
     )
     
     Write-Host "🔨 Compilando $Name..." -ForegroundColor Yellow
     Push-Location (Join-Path $script:ProjectRoot $Path)
     
     try {
-        # CORRECAO: Kernel (Forge) usa .cargo/config.toml com target customizado x86_64-redstone.json
-        # Nao devemos passar --target explicitamente para ele, senao ignora o config.toml
+        # Kernel usa .cargo/config.toml com target customizado
         if ($Name -eq "Kernel") {
-            # Build sem --target, deixa .cargo/config.toml definir (x86_64-redstone.json)
             if ($Profile -eq "release") {
                 cargo build --release
-            }
-            else {
+            } else {
                 cargo build
             }
-        }
-        else {
-            # Outros componentes usam target explicito
+        } else {
             if ($Profile -eq "release") {
                 cargo build --release --target $Target
-            }
-            else {
+            } else {
                 cargo build --target $Target
             }
         }
@@ -76,8 +80,7 @@ function Build-Component {
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  ✓ $Name OK" -ForegroundColor Green
             return $true
-        }
-        else {
+        } else {
             Write-Host "  ✗ $Name falhou" -ForegroundColor Red
             return $false
         }
@@ -87,382 +90,377 @@ function Build-Component {
     }
 }
 
+function Build-Services {
+    param([string]$Profile = "release")
+    
+    Write-Host "`n📦 Compilando Serviços..." -ForegroundColor Yellow
+    
+    foreach ($service in $script:Services) {
+        if (-not (Build-Component $service.Name $service.Path "x86_64-unknown-none" $Profile)) {
+            return $false
+        }
+    }
+    
+    return $true
+}
+
 function Build-All {
-    param([string]$Profile = "debug")
+    param([string]$Profile = "release")
     
     Write-Header "Build All ($Profile)"
     
-    # Verificar e instalar targets necessários
+    # Verificar targets
     if (-not (Ensure-Targets)) {
         Write-Host "`n✗ Falha ao configurar targets Rust" -ForegroundColor Red
         return $false
     }
     
-    # 1. LibC (dependência)
-    if (-not (Build-Component "LibC" "libs\libc" "x86_64-unknown-none" $Profile)) {
-        return $false
-    }
-    
-    # 2. Kernel
+    # 1. Kernel
     if (-not (Build-Component "Kernel" "forge" "x86_64-unknown-none" $Profile)) {
         return $false
     }
     
-    # 3. Bootloader
+    # 2. Bootloader
     if (-not (Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" $Profile)) {
         return $false
     }
     
-    # 4. Init
-    if (-not (Build-Component "Init" "services\init" "x86_64-unknown-none" $Profile)) {
+    # 3. Serviços
+    if (-not (Build-Services $Profile)) {
         return $false
     }
     
-    Write-Host "`n✓ Todos os componentes compilados com sucesso!" -ForegroundColor Green
+    Write-Host "`n✓ Todos os componentes compilados!" -ForegroundColor Green
     return $true
 }
 
-function Copy-ToQemu {
-    param([string]$Profile = "debug")
+function Create-ServicesManifest {
+    param([string]$Path)
     
-    Write-Host "`n📦 Copiando para dist/qemu/..." -ForegroundColor Yellow
+    $manifest = @"
+# Manifesto de Serviços - Redstone OS
+# /system/manifests/services.toml
+
+[init]
+path = "/system/core/init"
+restart = "never"
+depends = []
+
+# Futuros serviços:
+# [console]
+# path = "/system/services/console"
+# restart = "always"
+# depends = []
+
+# [devmgr]
+# path = "/system/services/devmgr"
+# restart = "always"
+# depends = ["console"]
+
+# [vfs]
+# path = "/system/services/vfs"
+# restart = "on-failure"
+# depends = ["devmgr"]
+
+# [logd]
+# path = "/system/services/logd"
+# restart = "always"
+# depends = []
+"@
+    
+    $manifest | Out-File -FilePath $Path -Encoding UTF8 -NoNewline
+    Write-Host "  ✓ services.toml criado" -ForegroundColor Green
+}
+
+function Copy-ToQemu {
+    param([string]$Profile = "release")
+    
+    Write-Host "`n📦 Preparando dist/qemu/..." -ForegroundColor Yellow
     
     $distPath = Join-Path $script:ProjectRoot "dist\qemu"
     
-    # Limpar dist/qemu/ completamente
+    # Limpar
     if (Test-Path $distPath) {
         Remove-Item "$distPath\*" -Recurse -Force -ErrorAction SilentlyContinue
     }
     
-    # Criar estrutura UEFI
+    # Estrutura UEFI
     New-Item -ItemType Directory -Path "$distPath\EFI\BOOT" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$distPath\boot" -Force | Out-Null
     
-    # Copiar bootloader (Ignite)
+    # Bootloader
     $bootloader = Join-Path $script:ProjectRoot "ignite\target\x86_64-unknown-uefi\$Profile\ignite.efi"
     if (Test-Path $bootloader) {
         Copy-Item $bootloader "$distPath\EFI\BOOT\BOOTX64.EFI" -Force
-        Write-Host "  ✓ Bootloader copiado (BOOTX64.EFI)" -ForegroundColor Green
+        Write-Host "  ✓ Bootloader → EFI/BOOT/BOOTX64.EFI" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Bootloader não encontrado: $bootloader" -ForegroundColor Red
+        Write-Host "  ✗ Bootloader não encontrado" -ForegroundColor Red
         return $false
     }
 
-    # Copiar UEFI Shell (Rescue/Fallback)
-    # Procura em anvil/assets/shellx64.efi
+    # UEFI Shell (opcional)
     $shellSource = Join-Path $script:ProjectRoot "anvil\assets\shellx64.efi"
     if (Test-Path $shellSource) {
         Copy-Item $shellSource "$distPath\EFI\BOOT\shellx64.efi" -Force
-        Write-Host "  ✓ UEFI Shell copiado (Rescue)" -ForegroundColor Green
-    } else {
-        Write-Host "  ! UEFI Shell não encontrado em assets. Fallback de recuperação indisponível." -ForegroundColor Yellow
-        Write-Host "    (Esperado em: $shellSource)" -ForegroundColor DarkGray
+        Write-Host "  ✓ UEFI Shell copiado" -ForegroundColor Green
     }
 
-    # Copiar Configuração (ignite.cfg)
-    # Procura em anvil/assets/ignite.cfg
+    # Config do bootloader
     $configSource = Join-Path $script:ProjectRoot "anvil\assets\ignite.cfg"
     if (Test-Path $configSource) {
         Copy-Item $configSource "$distPath\ignite.cfg" -Force
-        Write-Host "  ✓ Configuração copiada (ignite.cfg)" -ForegroundColor Green
-    } else {
-        Write-Host "  ! Configuração não encontrada em assets. Usando defaults embutidos." -ForegroundColor Yellow
+        Write-Host "  ✓ ignite.cfg copiado" -ForegroundColor Green
     }
     
-    # TODO(RFS): No futuro, quando o RFS estiver implementado,
-    # esses arquivos deverão ser movidos para a partição RFS e não ficar na partição de boot (ESP).
-    # Por enquanto, mantemos tudo na ESP (FAT32) para facilitar o boot.
-    New-Item -ItemType Directory -Path "$distPath\boot" -Force | Out-Null
-
-    # Copiar kernel
-    # CORREÇÃO: Kernel agora usa target customizado x86_64-redstone definido em .cargo/config.toml
-    # O caminho correto é forge/target/x86_64-redstone/[profile]/forge
+    # Kernel
     $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-redstone\$Profile\forge"
     if (Test-Path $kernel) {
         Copy-Item $kernel "$distPath\boot\kernel" -Force
-        Write-Host "  ✓ Kernel copiado para boot/kernel" -ForegroundColor Green
+        Write-Host "  ✓ Kernel → boot/kernel" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Kernel não encontrado: $kernel" -ForegroundColor Red
+        Write-Host "  ✗ Kernel não encontrado" -ForegroundColor Red
         return $false
     }
     
-    # Criar InitRAMFS (arquivo único com init dentro)
-    Write-Host "`n📦 Criando InitRAMFS...`n   Estrutura Moderna Redstone OS" -ForegroundColor Yellow
+    # InitRAMFS
+    Write-Host "`n📦 Criando InitRAMFS..." -ForegroundColor Yellow
     
-    # Criar estrutura moderna do Redstone OS
     $initramfsPath = Join-Path $script:ProjectRoot "initramfs"
     
-    # Limpar estrutura antiga se existir
+    # Limpar e recriar estrutura
     if (Test-Path $initramfsPath) {
         Remove-Item "$initramfsPath\*" -Recurse -Force -ErrorAction SilentlyContinue
     }
     
-    # /system - SO imutável
+    # Estrutura Redstone OS
     New-Item -ItemType Directory -Path "$initramfsPath\system\core" -Force | Out-Null
     New-Item -ItemType Directory -Path "$initramfsPath\system\services" -Force | Out-Null
     New-Item -ItemType Directory -Path "$initramfsPath\system\drivers" -Force | Out-Null
     New-Item -ItemType Directory -Path "$initramfsPath\system\manifests" -Force | Out-Null
-    
-    # /runtime - Estado volátil (será tmpfs)
     New-Item -ItemType Directory -Path "$initramfsPath\runtime\ipc" -Force | Out-Null
     New-Item -ItemType Directory -Path "$initramfsPath\runtime\logs" -Force | Out-Null
-    
-    # /state - Estado persistente
     New-Item -ItemType Directory -Path "$initramfsPath\state\system" -Force | Out-Null
     New-Item -ItemType Directory -Path "$initramfsPath\state\services" -Force | Out-Null
     
-    Write-Host "  ✓ Estrutura criada: /system, /runtime, /state" -ForegroundColor Green
+    Write-Host "  ✓ Estrutura: /system, /runtime, /state" -ForegroundColor Green
     
+    # Copiar init
     $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$Profile\init"
     if (Test-Path $init) {
-        # Copiar init para /system/core/init (estrutura moderna Redstone)
         Copy-Item $init "$initramfsPath\system\core\init" -Force
-        Write-Host "  ✓ /system/core/init copiado" -ForegroundColor Green
-        
-        # Criar TAR usando WSL
-        Write-Host "  📦 Criando initramfs.tar..." -ForegroundColor Yellow
-        
-        # Converter paths para WSL
-        $wslInitramfsPath = "/mnt/" + $initramfsPath.Replace(":\", "/").Replace("\", "/").ToLower()
-        $wslDistPath = "/mnt/" + $distPath.Replace(":\", "/").Replace("\", "/").ToLower()
-        
-        wsl tar -cf "$wslDistPath/boot/initfs" -C "$wslInitramfsPath" . 2>$null
-        
-        if ($LASTEXITCODE -eq 0) {
-            $tarSize = (Get-Item "$distPath\boot\initfs").Length
-            Write-Host "  ✓ initfs criado em boot/initfs ($([math]::Round($tarSize/1024, 2)) KB)" -ForegroundColor Green
-        } else {
-            Write-Host "  ✗ Falha ao criar TAR (WSL necessário)" -ForegroundColor Red
-            return $false
-        }
+        Write-Host "  ✓ /system/core/init" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Init não encontrado: $init" -ForegroundColor Red
+        Write-Host "  ✗ Init não encontrado" -ForegroundColor Red
         return $false
     }
     
-    Write-Host "`n✓ Dist/qemu atualizado!" -ForegroundColor Green
-    Write-Host "  Localização: $distPath" -ForegroundColor Cyan
+    # Copiar outros serviços (quando existirem)
+    foreach ($service in $script:Services) {
+        if ($service.Name -eq "init") { continue }
+        
+        $serviceBin = Join-Path $script:ProjectRoot "$($service.Path)\target\x86_64-unknown-none\$Profile\$($service.Name)"
+        if (Test-Path $serviceBin) {
+            Copy-Item $serviceBin "$initramfsPath\system\services\$($service.Name)" -Force
+            Write-Host "  ✓ /system/services/$($service.Name)" -ForegroundColor Green
+        }
+    }
+    
+    # Criar manifesto de serviços
+    Create-ServicesManifest "$initramfsPath\system\manifests\services.toml"
+    
+    # Criar TAR via WSL
+    Write-Host "  📦 Criando initfs (tar)..." -ForegroundColor Yellow
+    
+    $wslInitramfsPath = "/mnt/" + $initramfsPath.Replace(":\", "/").Replace("\", "/").ToLower()
+    $wslDistPath = "/mnt/" + $distPath.Replace(":\", "/").Replace("\", "/").ToLower()
+    
+    wsl tar -cf "$wslDistPath/boot/initfs" -C "$wslInitramfsPath" . 2>$null
+    
+    if ($LASTEXITCODE -eq 0) {
+        $tarSize = (Get-Item "$distPath\boot\initfs").Length
+        Write-Host "  ✓ initfs criado ($([math]::Round($tarSize/1024, 2)) KB)" -ForegroundColor Green
+    } else {
+        Write-Host "  ✗ Falha ao criar TAR (WSL necessário)" -ForegroundColor Red
+        return $false
+    }
+    
+    Write-Host "`n✓ dist/qemu pronto!" -ForegroundColor Green
+    Write-Host "  Local: $distPath" -ForegroundColor Cyan
     return $true
 }
 
+function Run-Qemu {
+    Write-Header "Executando QEMU"
+    
+    $distPath = Join-Path $script:ProjectRoot "dist\qemu"
+    $ovaPath = Join-Path $script:ProjectRoot "anvil\assets\OVMF.fd"
+    
+    if (-not (Test-Path "$distPath\EFI\BOOT\BOOTX64.EFI")) {
+        Write-Host "❌ Dist não encontrada. Execute Build primeiro." -ForegroundColor Red
+        return
+    }
+    
+    # Verificar OVMF
+    if (-not (Test-Path $ovaPath)) {
+        Write-Host "❌ OVMF.fd não encontrado em anvil/assets/" -ForegroundColor Red
+        Write-Host "   Baixe de: https://github.com/tianocore/edk2/releases" -ForegroundColor Yellow
+        return
+    }
+    
+    Write-Host "🚀 Iniciando QEMU..." -ForegroundColor Green
+    
+    $qemuArgs = @(
+        "-bios", $ovaPath,
+        "-drive", "format=raw,file=fat:rw:$distPath",
+        "-m", "512M",
+        "-serial", "stdio",
+        "-no-reboot",
+        "-no-shutdown"
+    )
+    
+    & qemu-system-x86_64 @qemuArgs
+}
+
+function Run-QemuGdb {
+    Write-Header "Executando QEMU com GDB"
+    
+    $distPath = Join-Path $script:ProjectRoot "dist\qemu"
+    $ovaPath = Join-Path $script:ProjectRoot "anvil\assets\OVMF.fd"
+    
+    Write-Host "🔧 QEMU aguardando GDB em localhost:1234" -ForegroundColor Yellow
+    Write-Host "   Para conectar: gdb -ex 'target remote :1234'" -ForegroundColor Cyan
+    
+    $qemuArgs = @(
+        "-bios", $ovaPath,
+        "-drive", "format=raw,file=fat:rw:$distPath",
+        "-m", "512M",
+        "-serial", "stdio",
+        "-no-reboot",
+        "-no-shutdown",
+        "-s", "-S"
+    )
+    
+    & qemu-system-x86_64 @qemuArgs
+}
+
+function Clean-All {
+    Write-Header "Limpando Artefatos"
+    
+    $paths = @(
+        "forge\target",
+        "ignite\target",
+        "services\init\target",
+        "dist\qemu"
+    )
+    
+    foreach ($path in $paths) {
+        $fullPath = Join-Path $script:ProjectRoot $path
+        if (Test-Path $fullPath) {
+            Write-Host "  🗑️ Removendo $path..." -ForegroundColor Yellow
+            Remove-Item $fullPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    
+    Write-Host "`n✓ Limpeza concluída!" -ForegroundColor Green
+}
+
+function Show-Environment {
+    Write-Header "Ambiente"
+    
+    Write-Host "`n📂 Diretórios:" -ForegroundColor Yellow
+    Write-Host "   Projeto: $script:ProjectRoot"
+    Write-Host "   Forge:   $(Join-Path $script:ProjectRoot 'forge')"
+    Write-Host "   Ignite:  $(Join-Path $script:ProjectRoot 'ignite')"
+    Write-Host "   Serviços: $(Join-Path $script:ProjectRoot 'services')"
+    
+    Write-Host "`n🔧 Rust:" -ForegroundColor Yellow
+    Write-Host "   $(rustc --version)"
+    Write-Host "   $(cargo --version)"
+    
+    Write-Host "`n🎯 Targets instalados:" -ForegroundColor Yellow
+    rustup target list --installed | ForEach-Object { Write-Host "   $_" }
+    
+    Write-Host "`n📦 Serviços configurados:" -ForegroundColor Yellow
+    foreach ($service in $script:Services) {
+        Write-Host "   - $($service.Name) ($($service.Path))"
+    }
+}
 
 # --- Menu Loop ---
 
 while ($true) {
     Clear-Host
     Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║                                        ║" -ForegroundColor Cyan
     Write-Host "║      🔨 Anvil - Redstone OS 🔨         ║" -ForegroundColor Cyan
-    Write-Host "║   A bigorna onde forjamos o sistema    ║" -ForegroundColor Cyan
-    Write-Host "║                                        ║" -ForegroundColor Cyan
+    Write-Host "║   Build System v2.0                    ║" -ForegroundColor Cyan
     Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "┌─ Build & Run ─────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [1] Build (Debug)                     │"
-    Write-Host "│ [2] Build (Release)                   │"
+    Write-Host "┌─ Build ───────────────────────────────┐" -ForegroundColor Yellow
+    Write-Host "│ [1] Build All (Release)               │"
+    Write-Host "│ [2] Build All (Debug)                 │"
     Write-Host "│ [3] Build Kernel                      │"
     Write-Host "│ [4] Build Bootloader                  │"
-    Write-Host "│ [5] Build Userspace                   │"
-    Write-Host "│ [6] Run (QEMU)                        │"
-    Write-Host "│ [7] Run com GDB                       │"
+    Write-Host "│ [5] Build Serviços                    │"
     Write-Host "└───────────────────────────────────────┘"
-    # Write-Host ""
-    # Write-Host "┌─ Distribution ────────────────────────┐" -ForegroundColor Yellow
-    # Write-Host "│ [8] Criar Distribuição                │"
-    # Write-Host "│ [9] Criar ISO                         │"
-    # Write-Host "│ [10] Gravar em USB                    │"
-    # Write-Host "└───────────────────────────────────────┘"
-    # Write-Host ""
-    # Write-Host "┌─ Recipes ─────────────────────────────┐" -ForegroundColor Yellow
-    # Write-Host "│ [11] Listar Receitas                  │"
-    # Write-Host "│ [12] Usar Receita Minimal             │"
-    # Write-Host "│ [13] Usar Receita Desktop             │"
-    # Write-Host "│ [14] Usar Receita Server              │"
-    # Write-Host "└───────────────────────────────────────┘"
-    # Write-Host ""
-    # Write-Host "┌─ Templates ───────────────────────────┐" -ForegroundColor Yellow
-    # Write-Host "│ [15] Listar Templates                 │"
-    # Write-Host "│ [16] Criar Novo Driver                │"
-    # Write-Host "│ [17] Criar Novo Service               │"
-    # Write-Host "└───────────────────────────────────────┘"
-    # Write-Host ""
-    # Write-Host "┌─ Quality ─────────────────────────────┐" -ForegroundColor Yellow
-    # Write-Host "│ [18] Check (Verificar código)         │"
-    # Write-Host "│ [19] Format (Formatar código)         │"
-    # Write-Host "│ [20] Clippy (Linter)                  │"
-    # Write-Host "│ [21] Doc (Gerar documentação)         │"
-    # Write-Host "└───────────────────────────────────────┘"
+    Write-Host ""
+    Write-Host "┌─ Run ─────────────────────────────────┐" -ForegroundColor Yellow
+    Write-Host "│ [6] Run QEMU                          │"
+    Write-Host "│ [7] Run QEMU + GDB                    │"
+    Write-Host "└───────────────────────────────────────┘"
     Write-Host ""
     Write-Host "┌─ Utilities ───────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [22] Clean (Limpar artefatos)         │"
-    Write-Host "│ [23] Env (Mostrar ambiente)           │"
+    Write-Host "│ [8] Clean                             │"
+    Write-Host "│ [9] Ambiente                          │"
     Write-Host "│ [Q] Sair                              │"
     Write-Host "└───────────────────────────────────────┘"
     Write-Host ""
     
-    $choice = Read-Host "Selecione uma opção"
+    $choice = Read-Host "Selecione"
     
     try {
         switch ($choice) {
-            # Build & Run
             "1" { 
-                Write-Header "Build para QEMU (Debug)"
-                
-                if (Build-All "debug") {
-                    if (Copy-ToQemu "debug") {
-                        Write-Host "`n🎉 Build completo! Pronto para testar no QEMU" -ForegroundColor Green
-                    }
+                if (Build-All "release") {
+                    Copy-ToQemu "release"
                 }
-                
                 Pause 
             }
             "2" { 
-                Write-Header "Build Release"
-                Run-Anvil @("build", "--release")
-                if ($LASTEXITCODE -eq 0) {
-                    Copy-ToDist "release"
+                if (Build-All "debug") {
+                    Copy-ToQemu "debug"
                 }
                 Pause 
             }
             "3" { 
-                Write-Header "Build Kernel"
-                Run-Anvil @("build", "kernel", "--release")
-                if ($LASTEXITCODE -eq 0) {
-                    Copy-ToDist "release"
-                }
+                Build-Component "Kernel" "forge" "x86_64-unknown-none" "release"
                 Pause 
             }
             "4" { 
-                Write-Header "Build Bootloader"
-                Run-Anvil @("build", "bootloader", "--release")
-                if ($LASTEXITCODE -eq 0) {
-                    Copy-ToDist "release"
-                }
+                Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" "release"
                 Pause 
             }
             "5" { 
-                Write-Header "Build Userspace"
-                Run-Anvil @("build", "userspace", "--release")
-                if ($LASTEXITCODE -eq 0) {
-                    Copy-ToDist "release"
-                }
+                Build-Services "release"
                 Pause 
             }
             "6" { 
-                Write-Header "Run QEMU"
-                Run-Anvil @("run")
+                Run-Qemu
                 Pause 
             }
             "7" { 
-                Write-Header "Run com GDB"
-                Run-Anvil @("run", "--gdb")
+                Run-QemuGdb
                 Pause 
             }
-            
-            # Distribution
             "8" { 
-                Write-Header "Criar Distribuição"
-                Run-Anvil @("dist", "--release")
+                Clean-All
                 Pause 
             }
             "9" { 
-                Write-Header "Criar ISO"
-                Run-Anvil @("iso")
+                Show-Environment
                 Pause 
             }
-            "10" { 
-                Write-Header "Gravar em USB"
-                Run-Anvil @("usb")
-                Pause 
-            }
-            
-            # Recipes
-            "11" { 
-                Write-Header "Receitas Disponíveis"
-                Run-Anvil @("recipe", "list")
-                Pause 
-            }
-            "12" { 
-                Write-Header "Usando Receita Minimal"
-                Run-Anvil @("recipe", "use", "minimal")
-                Pause 
-            }
-            "13" { 
-                Write-Header "Usando Receita Desktop"
-                Run-Anvil @("recipe", "use", "desktop")
-                Pause 
-            }
-            "14" { 
-                Write-Header "Usando Receita Server"
-                Run-Anvil @("recipe", "use", "server")
-                Pause 
-            }
-            
-            # Templates
-            "15" { 
-                Write-Header "Templates Disponíveis"
-                Run-Anvil @("template", "list")
-                Pause 
-            }
-            "16" { 
-                Write-Header "Criar Novo Driver"
-                $name = Read-Host "Nome do driver"
-                if ($name) {
-                    Run-Anvil @("template", "new", "driver", $name)
-                }
-                Pause 
-            }
-            "17" { 
-                Write-Header "Criar Novo Service"
-                $name = Read-Host "Nome do service"
-                if ($name) {
-                    Run-Anvil @("template", "new", "service", $name)
-                }
-                Pause 
-            }
-            
-            # Quality
-            "18" { 
-                Write-Header "Check"
-                Run-Anvil @("check")
-                Pause 
-            }
-            "19" { 
-                Write-Header "Format"
-                Run-Anvil @("fmt")
-                Pause 
-            }
-            "20" { 
-                Write-Header "Clippy"
-                Run-Anvil @("clippy")
-                Pause 
-            }
-            "21" { 
-                Write-Header "Documentação"
-                Run-Anvil @("doc", "--open")
-                Pause 
-            }
-            
-            # Utilities
-            "22" { 
-                Write-Header "Clean"
-                $all = Read-Host "Limpar tudo incluindo cache? (S/N)"
-                if ($all -eq 'S' -or $all -eq 's') {
-                    Run-Anvil @("clean", "--all")
-                } else {
-                    Run-Anvil @("clean")
-                }
-                Pause 
-            }
-            "23" { 
-                Write-Header "Ambiente"
-                Run-Anvil @("env")
-                Pause 
-            }
-            
-            # Sair
             "Q" { exit }
             "q" { exit }
-            
             Default { 
                 Write-Host "❌ Opção inválida" -ForegroundColor Red
                 Start-Sleep -Seconds 1
@@ -470,7 +468,7 @@ while ($true) {
         }
     }
     catch {
-        Write-Host "❌ Erro durante execução: $_" -ForegroundColor Red
+        Write-Host "❌ Erro: $_" -ForegroundColor Red
         Pause
     }
 }
