@@ -186,20 +186,37 @@ function Copy-ToQemu {
     }
     
     # Criar InitRAMFS (arquivo único com init dentro)
-    Write-Host "`n📦 Criando InitRAMFS..." -ForegroundColor Yellow
+    Write-Host "`n📦 Criando InitRAMFS...`n   Estrutura Moderna Redstone OS" -ForegroundColor Yellow
     
-    # Criar estrutura initramfs/
+    # Criar estrutura moderna do Redstone OS
     $initramfsPath = Join-Path $script:ProjectRoot "initramfs"
-    New-Item -ItemType Directory -Path "$initramfsPath\bin" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$initramfsPath\dev" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$initramfsPath\proc" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$initramfsPath\sys" -Force | Out-Null
+    
+    # Limpar estrutura antiga se existir
+    if (Test-Path $initramfsPath) {
+        Remove-Item "$initramfsPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
+    # /system - SO imutável
+    New-Item -ItemType Directory -Path "$initramfsPath\system\core" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\system\services" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\system\drivers" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\system\manifests" -Force | Out-Null
+    
+    # /runtime - Estado volátil (será tmpfs)
+    New-Item -ItemType Directory -Path "$initramfsPath\runtime\ipc" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\runtime\logs" -Force | Out-Null
+    
+    # /state - Estado persistente
+    New-Item -ItemType Directory -Path "$initramfsPath\state\system" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$initramfsPath\state\services" -Force | Out-Null
+    
+    Write-Host "  ✓ Estrutura criada: /system, /runtime, /state" -ForegroundColor Green
     
     $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$Profile\init"
     if (Test-Path $init) {
-        # Copiar init para /bin/init (não /sbin/init)
-        Copy-Item $init "$initramfsPath\bin\init" -Force
-        Write-Host "  ✓ /bin/init copiado" -ForegroundColor Green
+        # Copiar init para /system/core/init (estrutura moderna Redstone)
+        Copy-Item $init "$initramfsPath\system\core\init" -Force
+        Write-Host "  ✓ /system/core/init copiado" -ForegroundColor Green
         
         # Criar TAR usando WSL
         Write-Host "  📦 Criando initramfs.tar..." -ForegroundColor Yellow
