@@ -7,6 +7,9 @@ $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 # --- Configuração ---
 
 # Serviços a compilar (ordem de dependência)
+# NOTA: Outros serviços comentados até SYS_SPAWN estar implementado
+# (initramfs com todos serviços causa heap overflow no kernel)
+# Serviços a compilar (ordem de dependência)
 $script:Services = @(
     @{ Name = "init"; Path = "services\init" }
     @{ Name = "console"; Path = "services\console" }
@@ -105,7 +108,7 @@ function Build-Services {
 }
 
 function Build-All {
-    param([string]$Profile = "release")
+    param([string]$Profile = "debug")
     
     Write-Header "Build All ($Profile)"
     
@@ -396,8 +399,8 @@ while ($true) {
     Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "┌─ Build ───────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [1] Build All (Release)               │"
-    Write-Host "│ [2] Build All (Debug)                 │"
+    Write-Host "│ [1] Build All (Debug)                 │"
+    Write-Host "│ [2] Build All (Release)               │"
     Write-Host "│ [3] Build Kernel                      │"
     Write-Host "│ [4] Build Bootloader                  │"
     Write-Host "│ [5] Build Serviços                    │"
@@ -420,27 +423,27 @@ while ($true) {
     try {
         switch ($choice) {
             "1" { 
-                if (Build-All "release") {
-                    Copy-ToQemu "release"
-                }
-                Pause 
-            }
-            "2" { 
                 if (Build-All "debug") {
                     Copy-ToQemu "debug"
                 }
                 Pause 
             }
+            "2" { 
+                if (Build-All "release") {
+                    Copy-ToQemu "release"
+                }
+                Pause 
+            }
             "3" { 
-                Build-Component "Kernel" "forge" "x86_64-unknown-none" "release"
+                Build-Component "Kernel" "forge" "x86_64-unknown-none" "debug"
                 Pause 
             }
             "4" { 
-                Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" "release"
+                Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" "debug"
                 Pause 
             }
             "5" { 
-                Build-Services "release"
+                Build-Services "debug"
                 Pause 
             }
             "6" { 
