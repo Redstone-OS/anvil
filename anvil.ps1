@@ -7,15 +7,14 @@ $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 # --- Configuração ---
 
 # Serviços a compilar (ordem de dependência)
-# NOTA: Outros serviços comentados até SYS_SPAWN estar implementado
-# (initramfs com todos serviços causa heap overflow no kernel)
-# Serviços a compilar (ordem de dependência)
+# NOTA: Apenas init por enquanto para simplificar debugging
+# Outros serviços serão adicionados após SYS_SPAWN estar implementado
 $script:Services = @(
     @{ Name = "init"; Path = "services\init" }
-    @{ Name = "console"; Path = "services\console" }
-    @{ Name = "devices"; Path = "services\devices" }
-    @{ Name = "vfs"; Path = "services\vfs" }
-    @{ Name = "logger"; Path = "services\logger" }
+    # @{ Name = "console"; Path = "services\console" }
+    # @{ Name = "devices"; Path = "services\devices" }
+    # @{ Name = "vfs"; Path = "services\vfs" }
+    # @{ Name = "logger"; Path = "services\logger" }
 )
 
 # --- Funções Utilitárias ---
