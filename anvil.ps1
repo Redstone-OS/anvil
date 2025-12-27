@@ -67,8 +67,11 @@ function Build-Component {
         # Kernel usa .cargo/config.toml com target customizado
         if ($Name -eq "Kernel") {
             if ($Profile -eq "release") {
-                cargo build --release
+                # RELEASE: Desabilitar features de debug (log_trace, self_test)
+                # Usar apenas log_info para logs mínimos (INFO, WARN, ERROR)
+                cargo build --release --no-default-features --features log_info
             } else {
+                # DEBUG: Usar features default (log_trace, self_test)
                 cargo build
             }
         } else {
