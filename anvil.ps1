@@ -60,22 +60,41 @@ function Build-Component {
         [string]$Profile = "release"
     )
     
-    Write-Host "🔨 Compilando $Name..." -ForegroundColor Yellow
+    Write-Host "🔨 Compilando $Name ($Profile)..." -ForegroundColor Yellow
     Push-Location (Join-Path $script:ProjectRoot $Path)
     
     try {
         # Kernel usa .cargo/config.toml com target customizado
         if ($Name -eq "Kernel") {
-            if ($Profile -eq "release") {
-                # RELEASE: Desabilitar features de debug (log_trace, self_test)
-                # Usar apenas log_info para logs mínimos (INFO, WARN, ERROR)
-                cargo build --release --no-default-features --features log_info
-            } else {
-                # DEBUG: Usar features default (log_trace, self_test)
-                cargo build
+            switch ($Profile) {
+                "release" {
+                    # RELEASE PRODUÇÃO: Apenas ERROR, WARN, [OK]
+                    cargo build --release --no-default-features --features log_error
+                }
+                "release-minimal" {
+                    # PRODUÇÃO: Zero logs
+                    cargo build --profile release-minimal --no-default-features --features no_logs
+                }
+                "release-debug" {
+                    # DESENVOLVIMENTO: INFO + DEBUG (sem TRACE)
+                    cargo build --profile release-debug --no-default-features --features "log_debug,self_test"
+                }
+                "release-trace" {
+                    # DEBUGGING PROFUNDO: Máxima verbosidade (TRACE incluso)
+                    cargo build --profile release-trace --no-default-features --features "log_trace,self_test"
+                }
+                "release-test" {
+                    # CI/CD: Logs INFO apenas
+                    cargo build --profile release-test --no-default-features --features log_info
+                }
+                default {
+                    # DEBUG (dev profile): Usa features default (log_trace + self_test)
+                    cargo build
+                }
             }
         } else {
-            if ($Profile -eq "release") {
+            # Outros componentes (bootloader, serviços)
+            if ($Profile -like "release*") {
                 cargo build --release --target $Target
             } else {
                 cargo build --target $Target
@@ -179,9 +198,28 @@ depends = []
 function Copy-ToQemu {
     param([string]$Profile = "release")
     
-    Write-Host "`n📦 Preparando dist/qemu/..." -ForegroundColor Yellow
+    Write-Host "`n📦 Preparando dist/qemu/...\" -ForegroundColor Yellow
     
     $distPath = Join-Path $script:ProjectRoot "dist\qemu"
+    
+    # Determinar o diretório de saída do Cargo
+    # Perfis customizados usam seu próprio nome como pasta
+    # debug -> debug, release -> release, release-debug -> release-debug
+    if ($Profile -eq "debug") {
+        $kernelDir = "debug"
+        $bootloaderDir = "debug"
+        $serviceDir = "debug"
+    } elseif ($Profile -eq "release") {
+        $kernelDir = "release"
+        $bootloaderDir = "release"
+        $serviceDir = "release"
+    } else {
+        # Perfis customizados (release-debug, release-trace, etc.)
+        $kernelDir = $Profile
+        # Bootloader e serviços não têm perfis customizados, usam release
+        $bootloaderDir = "release"
+        $serviceDir = "release"
+    }
     
     # Limpar
     if (Test-Path $distPath) {
@@ -193,12 +231,12 @@ function Copy-ToQemu {
     New-Item -ItemType Directory -Path "$distPath\boot" -Force | Out-Null
     
     # Bootloader
-    $bootloader = Join-Path $script:ProjectRoot "ignite\target\x86_64-unknown-uefi\$Profile\ignite.efi"
+    $bootloader = Join-Path $script:ProjectRoot "ignite\target\x86_64-unknown-uefi\$bootloaderDir\ignite.efi"
     if (Test-Path $bootloader) {
         Copy-Item $bootloader "$distPath\EFI\BOOT\BOOTX64.EFI" -Force
         Write-Host "  ✓ Bootloader → EFI/BOOT/BOOTX64.EFI" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Bootloader não encontrado" -ForegroundColor Red
+        Write-Host "  ✗ Bootloader não encontrado em $bootloader" -ForegroundColor Red
         return $false
     }
 
@@ -217,12 +255,12 @@ function Copy-ToQemu {
     }
     
     # Kernel
-    $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-redstone\$Profile\forge"
+    $kernel = Join-Path $script:ProjectRoot "forge\target\x86_64-redstone\$kernelDir\forge"
     if (Test-Path $kernel) {
         Copy-Item $kernel "$distPath\boot\kernel" -Force
-        Write-Host "  ✓ Kernel → boot/kernel" -ForegroundColor Green
+        Write-Host "  ✓ Kernel ($kernelDir) → boot/kernel" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Kernel não encontrado" -ForegroundColor Red
+        Write-Host "  ✗ Kernel não encontrado em $kernel" -ForegroundColor Red
         return $false
     }
     
@@ -249,12 +287,12 @@ function Copy-ToQemu {
     Write-Host "  ✓ Estrutura: /system, /runtime, /state" -ForegroundColor Green
     
     # Copiar init
-    $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$Profile\init"
+    $init = Join-Path $script:ProjectRoot "services\init\target\x86_64-unknown-none\$serviceDir\init"
     if (Test-Path $init) {
         Copy-Item $init "$initramfsPath\system\core\init" -Force
         Write-Host "  ✓ /system/core/init" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ Init não encontrado" -ForegroundColor Red
+        Write-Host "  ✗ Init não encontrado em $init" -ForegroundColor Red
         return $false
     }
     
@@ -262,7 +300,7 @@ function Copy-ToQemu {
     foreach ($service in $script:Services) {
         if ($service.Name -eq "init") { continue }
         
-        $serviceBin = Join-Path $script:ProjectRoot "$($service.Path)\target\x86_64-unknown-none\$Profile\$($service.Name)"
+        $serviceBin = Join-Path $script:ProjectRoot "$($service.Path)\target\x86_64-unknown-none\$serviceDir\$($service.Name)"
         if (Test-Path $serviceBin) {
             Copy-Item $serviceBin "$initramfsPath\system\services\$($service.Name)" -Force
             Write-Host "  ✓ /system/services/$($service.Name)" -ForegroundColor Green
@@ -400,25 +438,27 @@ while ($true) {
     Clear-Host
     Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║      🔨 Anvil - Redstone OS 🔨         ║" -ForegroundColor Cyan
-    Write-Host "║   Build System v2.0                    ║" -ForegroundColor Cyan
+    Write-Host "║   Build System v3.1                    ║" -ForegroundColor Cyan
     Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "┌─ Build ───────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [1] Build All (Debug)                 │"
-    Write-Host "│ [2] Build All (Release)               │"
-    Write-Host "│ [3] Build Kernel                      │"
-    Write-Host "│ [4] Build Bootloader                  │"
-    Write-Host "│ [5] Build Serviços                    │"
+    Write-Host "│ [1] Build (release-debug) RECOMENDADO │" -ForegroundColor Green
+    Write-Host "│ [2] Build (release-trace) Verbose     │"
+    Write-Host "│ [3] Build (release) Produção          │"
+    Write-Host "│ [4] Build Kernel Apenas               │"
+    Write-Host "│ [5] Build Bootloader Apenas           │"
+    Write-Host "│ [6] Build Serviços Apenas             │"
     Write-Host "└───────────────────────────────────────┘"
     Write-Host ""
     Write-Host "┌─ Run ─────────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [6] Run QEMU                          │"
-    Write-Host "│ [7] Run QEMU + GDB                    │"
+    Write-Host "│ [7] Run QEMU (Windows)                │"
+    Write-Host "│ [8] Run QEMU (WSL)                    │" -ForegroundColor Cyan
+    Write-Host "│ [9] Run QEMU + GDB                    │"
     Write-Host "└───────────────────────────────────────┘"
     Write-Host ""
     Write-Host "┌─ Utilities ───────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [8] Clean                             │"
-    Write-Host "│ [9] Ambiente                          │"
+    Write-Host "│ [C] Clean                             │"
+    Write-Host "│ [E] Ambiente                          │"
     Write-Host "│ [Q] Sair                              │"
     Write-Host "└───────────────────────────────────────┘"
     Write-Host ""
@@ -426,49 +466,77 @@ while ($true) {
     $choice = Read-Host "Selecione"
     
     try {
-        switch ($choice) {
+        switch ($choice.ToUpper()) {
             "1" { 
-                if (Build-All "debug") {
-                    Copy-ToQemu "debug"
+                # RECOMENDADO: release-debug (logs + símbolos + otimização moderada)
+                if (Build-All "release-debug") {
+                    Copy-ToQemu "release-debug"
                 }
                 Pause 
             }
             "2" { 
+                # Debugging profundo com máxima verbosidade
+                if (Build-All "release-trace") {
+                    Copy-ToQemu "release-trace"
+                }
+                Pause 
+            }
+            "3" { 
+                # Produção: logs mínimos
                 if (Build-All "release") {
                     Copy-ToQemu "release"
                 }
                 Pause 
             }
-            "3" { 
-                Build-Component "Kernel" "forge" "x86_64-unknown-none" "debug"
-                Pause 
-            }
             "4" { 
-                Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" "debug"
+                Build-Component "Kernel" "forge" "x86_64-unknown-none" "release-debug"
                 Pause 
             }
             "5" { 
-                Build-Services "debug"
+                Build-Component "Bootloader" "ignite" "x86_64-unknown-uefi" "release"
                 Pause 
             }
             "6" { 
-                Run-Qemu
+                Build-Services "release"
                 Pause 
             }
             "7" { 
+                Run-Qemu
+                Pause 
+            }
+            "8" {
+                # Run QEMU via WSL
+                Write-Host "`n🐧 Executando QEMU via WSL..." -ForegroundColor Cyan
+                
+                # Converter caminho Windows para WSL
+                $distPath = $script:ProjectRoot -replace '\\', '/'
+                $driveLetter = $distPath.Substring(0, 1).ToLower()
+                $pathWithoutDrive = $distPath.Substring(2)
+                $wslPath = "/mnt/$driveLetter$pathWithoutDrive/dist"
+                
+                Write-Host "  Caminho WSL: $wslPath" -ForegroundColor DarkGray
+                
+                # Executar diretamente via wsl bash -c com script inline
+                # Evita problemas de line endings (CRLF vs LF)
+                $cmd = @"
+cd /tmp && qemu-system-x86_64 -m 512M -drive file=fat:rw:'$wslPath/qemu',format=raw -bios /usr/share/qemu/OVMF.fd -serial stdio -monitor none -device VGA,vgamem_mb=16 -no-reboot -d cpu_reset,int,mmu,guest_errors,unimp -D '$wslPath/qemu-internal.log' 2>&1 | tee '$wslPath/qemu-serial.log'
+"@
+                wsl bash -c $cmd
+                Pause
+            }
+            "9" { 
                 Run-QemuGdb
                 Pause 
             }
-            "8" { 
+            "C" { 
                 Clean-All
                 Pause 
             }
-            "9" { 
+            "E" { 
                 Show-Environment
                 Pause 
             }
             "Q" { exit }
-            "q" { exit }
             Default { 
                 Write-Host "❌ Opção inválida" -ForegroundColor Red
                 Start-Sleep -Seconds 1
