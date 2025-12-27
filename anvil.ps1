@@ -11,7 +11,7 @@ $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 # Outros serviços serão adicionados após SYS_SPAWN estar implementado
 $script:Services = @(
     @{ Name = "init"; Path = "services\init" }
-    # @{ Name = "console"; Path = "services\console" }
+    @{ Name = "console"; Path = "services\console" }
     # @{ Name = "devices"; Path = "services\devices" }
     # @{ Name = "vfs"; Path = "services\vfs" }
     # @{ Name = "logger"; Path = "services\logger" }
@@ -299,6 +299,16 @@ function Copy-ToQemu {
     # Copiar outros serviços (quando existirem)
     foreach ($service in $script:Services) {
         if ($service.Name -eq "init") { continue }
+        
+        $serviceBin = Join-Path $script:ProjectRoot "$($service.Path)\target\x86_64-unknown-none\$serviceDir\$($service.Name)"
+        if (Test-Path $serviceBin) {
+            Copy-Item $serviceBin "$initramfsPath\system\services\$($service.Name)" -Force
+            Write-Host "  ✓ /system/services/$($service.Name)" -ForegroundColor Green
+        }
+    }
+
+    foreach ($service in $script:Services) {
+        if ($service.Name -eq "console") { continue }
         
         $serviceBin = Join-Path $script:ProjectRoot "$($service.Path)\target\x86_64-unknown-none\$serviceDir\$($service.Name)"
         if (Test-Path $serviceBin) {
