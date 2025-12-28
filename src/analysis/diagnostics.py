@@ -416,26 +416,26 @@ class DiagnosticEngine:
         # ====================================================================
         # ANÁLISE DO CPU LOG
         # ====================================================================
-        if cpu_context:
-            console.print("\n[bold cyan]🖥️ Contexto CPU (registradores)[/bold cyan]")
+       # if cpu_context:
+        #    console.print("\n[bold cyan]🖥️ Contexto CPU (registradores)[/bold cyan]")
             # Filtrar linhas relevantes (RIP, RSP, registradores, etc.)
-            relevant_lines = []
+            # relevant_lines = []
             # Aumentado busca para 200 linhas
-            for entry in cpu_context[-400:]:
-                line = entry.line
+          #  for entry in cpu_context[-400:]:
+          #      line = entry.line
                 # Filtro mais permissivo ou apenas mostrar últimas N linhas se filtro for muito agressivo
                 # O usuário pediu mais info, vamos mostrar blocos contíguos de registradores
-                if any(kw in line.upper() for kw in ["RIP=", "RSP=", "RAX=", "RBX=", "RCX=", "RDX=", 
-                                                       "RSI=", "RDI=", "R8=", "R9=", "R10=", "R11=",
-                                                       "CR0=", "CR2=", "CR3=", "CR4=", "EFLAGS=",
-                                                       "CS=", "SS=", "DS=", "ES=", "FS=", "GS=",
-                                                       "SMM=", "V="]):
-                    relevant_lines.append(line)
+              #  if any(kw in line.upper() for kw in ["RIP=", "RSP=", "RAX=", "RBX=", "RCX=", "RDX=", 
+             #                                          "RSI=", "RDI=", "R8=", "R9=", "R10=", "R11=",
+             #                                          "CR0=", "CR2=", "CR3=", "CR4=", "EFLAGS=",
+             #                                          "CS=", "SS=", "DS=", "ES=", "FS=", "GS=",
+             #                                          "SMM=", "V="]):
+                #    relevant_lines.append(line)
             
-            if relevant_lines:
-                # Mostrar mais linhas (últimas 40 em vez de 20)
-                for line in relevant_lines[-40:]:
-                    console.print(f"  [dim]{line}[/dim]")
+          #  if relevant_lines:
+          #      # Mostrar mais linhas (últimas 40 em vez de 20)
+           #     for line in relevant_lines[-40:]:
+          #          console.print(f"  [dim]{line}[/dim]")
         
         # ====================================================================
         # DISASSEMBLY
