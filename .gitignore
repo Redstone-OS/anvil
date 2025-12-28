@@ -4,6 +4,7 @@
 *.pyo
 *.pyd
 *.pdb
+__pycache__
 
 # Ambientes virtuais
 .venv/

@@ -404,14 +404,14 @@ class DiagnosticEngine:
         # ====================================================================
         # SAÍDA SERIAL ANTES DO CRASH
         # ====================================================================
-        if serial_context:
-            console.print("\n[bold cyan]📺 Últimas Linhas Serial (antes do crash)[/bold cyan]")
-            console.print("[dim]─" * 60 + "[/dim]")
-            # Aumentado para 50 linhas para dar mais contexto
-            for entry in serial_context[-50:]:
-                colored = self._colorize_line(entry.line)
-                console.print(f"  {colored}")
-            console.print("[dim]─" * 60 + "[/dim]")
+       # if serial_context:
+       #     console.print("\n[bold cyan]📺 Últimas Linhas Serial (antes do crash)[/bold cyan]")
+        #    console.print("[dim]─" * 60 + "[/dim]")
+       #     # Aumentado para 50 linhas para dar mais contexto
+       #     for entry in serial_context[-50:]:
+        #        colored = self._colorize_line(entry.line)
+        #        console.print(f"  {colored}")
+       #     console.print("[dim]─" * 60 + "[/dim]")
         
         # ====================================================================
         # ANÁLISE DO CPU LOG
@@ -421,7 +421,7 @@ class DiagnosticEngine:
             # Filtrar linhas relevantes (RIP, RSP, registradores, etc.)
             relevant_lines = []
             # Aumentado busca para 200 linhas
-            for entry in cpu_context[-200:]:
+            for entry in cpu_context[-400:]:
                 line = entry.line
                 # Filtro mais permissivo ou apenas mostrar últimas N linhas se filtro for muito agressivo
                 # O usuário pediu mais info, vamos mostrar blocos contíguos de registradores
@@ -458,25 +458,25 @@ class DiagnosticEngine:
         # ====================================================================
         # PADRÕES CONHECIDOS
         # ====================================================================
-        if diagnosis.matching_patterns:
-            console.print("\n[bold cyan]📚 Padrões Conhecidos Detectados[/bold cyan]")
-            for pattern in diagnosis.matching_patterns:
-                severity_color = {
-                    Severity.INFO: "blue",
-                    Severity.WARNING: "yellow",
-                    Severity.CRITICAL: "red",
-                }[pattern.severity]
-                console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]")
-                console.print(f"    [dim]{pattern.diagnosis}[/dim]")
+        #if diagnosis.matching_patterns:
+        #    console.print("\n[bold cyan]📚 Padrões Conhecidos Detectados[/bold cyan]")
+        #    for pattern in diagnosis.matching_patterns:
+        #        severity_color = {
+        #            Severity.INFO: "blue",
+        #            Severity.WARNING: "yellow",
+        #            Severity.CRITICAL: "red",
+        #        }[pattern.severity]
+        #        console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]")
+        #        console.print(f"    [dim]{pattern.diagnosis}[/dim]")
         
         # ====================================================================
         # CAUSA PROVÁVEL
         # ====================================================================
-        console.print("\n[bold yellow]🎯 Causa Provável[/bold yellow]")
-        console.print(Panel(
-            diagnosis.probable_cause,
-            border_style="yellow",
-        ))
+       # console.print("\n[bold yellow]🎯 Causa Provável[/bold yellow]")
+       # console.print(Panel(
+      #      diagnosis.probable_cause,
+       #     border_style="yellow",
+       # ))
         
         # ====================================================================
         # SUGESTÕES
