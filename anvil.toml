@@ -1,0 +1,81 @@
+# Anvil - Configuração do Projeto
+
+[project]
+name = "RedstoneOS"
+root = ".."
+
+# ============================================================================
+# Componentes
+# ============================================================================
+
+[components.kernel]
+path = "forge"
+target = "x86_64-redstone"
+default_profile = "release"
+
+[components.bootloader]
+path = "ignite"
+target = "x86_64-unknown-uefi"
+default_profile = "release"
+
+[[components.services]]
+name = "init"
+path = "services/init"
+target = "x86_64-unknown-none"
+
+[[components.services]]
+name = "console"
+path = "services/console"
+target = "x86_64-unknown-none"
+
+# ============================================================================
+# QEMU
+# ============================================================================
+
+[qemu]
+memory = "512M"
+ovmf = "assets/OVMF.fd"
+extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
+
+[qemu.logging]
+flags = ["cpu_reset", "int", "mmu", "guest_errors", "unimp"]
+serial_file = "../dist/qemu-serial.log"
+internal_file = "../dist/qemu-internal.log"
+
+# ============================================================================
+# Análise
+# ============================================================================
+
+[analysis]
+context_lines = 100
+auto_inspect_binary = true
+stop_on_exception = true
+
+# Padrões de exceção conhecidos
+[[analysis.patterns]]
+name = "sse_in_kernel"
+trigger = "v=06.*RIP=ffffffff"
+diagnosis = "Instrução SSE/AVX gerada no kernel (proibido)"
+solution = "Verificar flags -mno-sse no target.json"
+severity = "critical"
+
+[[analysis.patterns]]
+name = "page_fault"
+trigger = "v=0e"
+diagnosis = "Page Fault (#PF)"
+solution = "Verificar CR2 para endereço inválido"
+severity = "critical"
+
+[[analysis.patterns]]
+name = "general_protection"
+trigger = "v=0d"
+diagnosis = "General Protection Fault (#GP)"
+solution = "Verificar segmentos, permissões ou instrução inválida"
+severity = "critical"
+
+[[analysis.patterns]]
+name = "double_fault"
+trigger = "v=08"
+diagnosis = "Double Fault (#DF)"
+solution = "Stack overflow ou IDT corrompida"
+severity = "critical"

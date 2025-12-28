@@ -1,209 +1,190 @@
-# Anvil 🔨 - Build System do Redstone OS
+# 🔨 Anvil 4.0
 
-**Versão**: 1.0.0  
-**Tagline**: "A bigorna onde forjamos o Redstone OS"
+**Build, Run and Diagnostic Tool for RedstoneOS**
 
----
+Ferramenta profissional em Python para compilar, executar e diagnosticar o RedstoneOS.
 
-## 🎯 O que é Anvil?
+## ✨ Features
 
-**Anvil** (Bigorna) é o sistema de build profissional do Redstone OS. Assim como o ferreiro usa a bigorna para forjar ferramentas na forja, o Anvil é onde "forjamos" o Redstone OS.
+- **Build automatizado** com validação de artefatos (ELF/PE, checksums)
+- **Execução via WSL** com monitoramento dual (serial + CPU log)
+- **Detecção de exceções em tempo real** (#GP, #PF, #UD, etc.)
+- **Diagnóstico inteligente** com disassembly e busca de símbolos
+- **Inspeção de binários** para detectar instruções SSE proibidas
+- **CLI moderna** com Typer e **TUI interativa** com Rich
 
-### Trocadilho Perfeito
-
-- **Ignite** (bootloader) = Acende a forja 🔥
-- **Forge** (kernel) = A forja onde tudo é criado ⚒️
-- **Anvil** (build tool) = A bigorna onde trabalhamos 🔨
-- **Redstone** = A pedra vermelha que alimenta tudo 🔴
-
----
-
-## 🚀 Instalação
+## 📦 Instalação
 
 ```bash
-# Anvil já vem com o Redstone OS
-cd D:\Github\Redstone
-cargo build -p anvil
+cd anvil
+pip install -e .
 ```
 
----
-
-## 📝 Comandos Principais
-
-### Build & Run
+Para desenvolvimento:
 
 ```bash
-# Build completo
-anvil build                    # Debug
-anvil build --release          # Release
-anvil build --target aarch64   # Cross-compile
-
-# Build específico
-anvil build kernel             # Apenas kernel (Forge)
-anvil build bootloader         # Apenas bootloader (Ignite)
-anvil build drivers            # Apenas drivers
-anvil build userspace          # Apenas userspace
-
-# Run no QEMU
-anvil run                      # Debug
-anvil run --release            # Release
-anvil run --gdb                # Com GDB server
-anvil run --kvm                # Com KVM
+pip install -e ".[dev]"
 ```
 
-### Distribution
+## 🚀 Uso
+
+### CLI
 
 ```bash
-# Criar distribuição
-anvil dist                     # Dist completa
-anvil dist --minimal           # Dist mínima
-anvil dist --desktop           # Dist desktop
+# Build e executa com monitoramento
+anvil run
 
-# Criar ISO
-anvil iso                      # ISO bootável
+# Build apenas
+anvil build [--profile release|debug]
 
-# Gravar em USB
-anvil usb                      # Interativo
-anvil usb --device /dev/sdb    # Direto
+# Build componente específico
+anvil build --kernel
+anvil build --bootloader
+anvil build --services
+
+# Analisar log existente
+anvil analyze dist/qemu-internal.log
+
+# Inspecionar kernel
+anvil inspect --check-sse    # Busca instruções SSE
+anvil inspect --sections     # Lista seções
+anvil inspect -a 0xffffffff80001000  # Disassembly
+
+# Estatísticas de código
+anvil stats
+
+# Limpar artefatos
+anvil clean
+
+# Ambiente
+anvil env
 ```
 
-### Recipes (Receitas)
+### Menu Interativo (TUI)
 
 ```bash
-# Listar receitas
-anvil recipe list              # Lista receitas disponíveis
-anvil recipe show minimal      # Mostra receita
-
-# Usar receita
-anvil recipe use minimal       # Usa receita minimal
-anvil recipe use desktop       # Usa receita desktop
+anvil menu
 ```
 
-### Templates
+![TUI Menu](docs/tui.png)
 
-```bash
-# Criar a partir de template
-anvil template new driver mydriver       # Novo driver
-anvil template new service myservice     # Novo serviço
-anvil template new app myapp             # Nova aplicação
+## 📁 Estrutura
+
+```
+anvil/
+├── anvil/
+│   ├── core/          # Config, logger, paths, exceptions
+│   ├── build/         # Cargo wrapper, artifacts, initramfs, dist
+│   ├── runner/        # QEMU, WSL, monitor, streams
+│   └── analysis/      # Parser, detector, inspector, diagnostics
+├── assets/
+│   ├── OVMF.fd
+│   ├── ignite.cfg
+│   └── initramfs/
+├── anvil.toml         # Configuração
+└── pyproject.toml
 ```
 
-### Quality
+## ⚙️ Configuração
 
-```bash
-# Verificação
-anvil check                    # Cargo check
-anvil fmt                      # Formatar código
-anvil clippy                   # Linter
-anvil doc                      # Gerar documentação
-```
-
-### Utilities
-
-```bash
-# Utilitários
-anvil clean                    # Limpa build
-anvil env                      # Mostra ambiente
-anvil version                  # Versão
-```
-
----
-
-## 🍳 Sistema de Receitas
-
-Receitas definem **o que** construir e **como** configurar.
-
-### Receitas Disponíveis
-
-1. **minimal** - Sistema mínimo (kernel + init)
-2. **desktop** - Desktop completo (GUI + apps)
-3. **server** - Servidor (sem GUI)
-4. **embedded** - Embarcado
-5. **developer** - Desenvolvimento (debug + tools)
-
-### Exemplo de Receita
-
-```toml
-# recipes/desktop.toml
-
-[recipe]
-name = "desktop"
-description = "Redstone OS Desktop Edition"
-
-[components]
-kernel = { enabled = true }
-bootloader = { enabled = true }
-init = { enabled = true }
-shell = { enabled = true }
-gui = { enabled = true }
-
-[drivers]
-essential = ["ps2", "serial", "vga", "ahci"]
-optional = ["e1000", "xhci"]
-
-[userspace]
-coreutils = ["ls", "cat", "cp", "mv", "rm"]
-sysutils = ["ps", "top", "mount"]
-```
-
----
-
-## 📦 Templates
-
-Templates facilitam criação de novos componentes.
-
-```bash
-$ anvil template new driver mydriver
-🔨 Criando driver 'mydriver'...
-✓ Criado drivers/mydriver/
-✓ Criado drivers/mydriver/Cargo.toml
-✓ Criado drivers/mydriver/src/main.rs
-```
-
----
-
-## 🎨 Configuração
-
-Crie um arquivo `anvil.toml` na raiz do projeto:
+Arquivo `anvil.toml`:
 
 ```toml
 [project]
-name = "redstone"
-version = "1.0.0"
+name = "RedstoneOS"
+root = ".."
 
-[targets]
-default = "x86_64-unknown-none"
+[components.kernel]
+path = "forge"
+target = "x86_64-redstone"
 
-[build]
-parallel = true
-cache = true
+[components.bootloader]
+path = "ignite"
+target = "x86_64-unknown-uefi"
+
+[[components.services]]
+name = "init"
+path = "services/init"
 
 [qemu]
-memory = "256M"
-serial = "stdio"
+memory = "512M"
+extra_args = ["-no-reboot"]
+
+[qemu.logging]
+flags = ["cpu_reset", "int", "mmu", "guest_errors"]
+
+[analysis]
+context_lines = 100
+auto_inspect_binary = true
+stop_on_exception = true
 ```
 
----
+## 🔍 Diagnóstico Automático
 
-## 📚 Documentação Completa
+Quando uma exceção é detectada, o Anvil automaticamente:
 
-- [Comandos](docs/COMMANDS.md)
-- [Receitas](docs/RECIPES.md)
-- [Templates](docs/TEMPLATES.md)
-- [Configuração](docs/CONFIG.md)
+1. **Identifica** o tipo de exceção (Page Fault, GPF, etc.)
+2. **Extrai** contexto (RIP, CR2, registradores)
+3. **Localiza** o símbolo/função usando `addr2line`
+4. **Desmonta** o código no ponto de falha com `objdump`
+5. **Correlaciona** com padrões conhecidos do RedstoneOS
+6. **Sugere** causas prováveis e soluções
 
----
+### Exemplo de Diagnóstico
 
-## 🤝 Contribuindo
+```
+╔════════════════════════════════════════╗
+║ 💥 Page Fault (#PF)                    ║
+╚════════════════════════════════════════╝
 
-Anvil é parte do Redstone OS. Contribuições são bem-vindas!
+RIP     0xffffffff80012a40
+CR2     0x0000000000000000
+Símbolo kernel::mm::vmm::init
 
----
+🔍 Causa Provável:
+   NULL pointer dereference
 
-## 📄 Licença
+💡 Sugestões:
+   1. Verificar Option/Result não tratados
+   2. Verificar ponteiros não inicializados
+   3. Verificar uso da função 'kernel::mm::vmm::init'
 
-MIT License
+📋 Código no RIP:
+   → 0xffffffff80012a40: mov rax, [rdi]
+     0xffffffff80012a43: test rax, rax
+     0xffffffff80012a46: je 0xffffffff80012a60
+```
 
----
+## 🛠️ Requisitos
 
-**Anvil** 🔨 - A bigorna onde forjamos o Redstone OS
+### Windows
+- Python 3.11+
+- WSL 2 com Ubuntu
+
+### WSL
+- qemu-system-x86_64
+- binutils (objdump, nm, addr2line)
+- OVMF.fd
+
+```bash
+# No WSL
+sudo apt install qemu-system-x86 binutils
+sudo apt install ovmf
+```
+
+## 📊 Comparação com Anvil Antigo
+
+| Feature | anvil.ps1 | Anvil 4.0 |
+|---------|-----------|-----------|
+| Build | ✅ Básico | ✅ Com validação |
+| Run QEMU | ✅ | ✅ Via WSL |
+| Monitoramento | ❌ | ✅ Dual async |
+| Detecção de erros | ❌ | ✅ Tempo real |
+| Diagnóstico | ❌ | ✅ Automático |
+| Inspeção binário | ❌ | ✅ objdump/nm |
+| CLI moderna | ❌ | ✅ Typer |
+| TUI | ✅ PowerShell | ✅ Rich |
+
+## 📝 License
+
+MIT - RedstoneOS Team
