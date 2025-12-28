@@ -111,12 +111,14 @@ class QemuMonitor:
         
         return None
     
+    
     def _colorize_serial_line(self, line: str) -> str:
         """Aplica cores às tags conhecidas e remove ANSI codes antigos."""
         import re
         
         # Remover códigos ANSI existentes (escape sequences)
-        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+        # Mais abrangente: CSI sequences (CSI P1; P2 ... Fn)
+        ansi_escape = re.compile(r'\x1b\[[0-9;?]*[a-zA-Z]')
         line = ansi_escape.sub('', line)
         
         # Colorir tags conhecidas
@@ -153,6 +155,30 @@ class QemuMonitor:
             if self.stop_on_exception:
                 self._should_stop = True
     
+    def _save_logs(self) -> None:
+        """Salva logs capturados em arquivos."""
+        try:
+            # Diretório de logs criados pelo usuário
+            log_dir = self.paths.anvil_root / "src" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            serial_file = log_dir / f"serial_{timestamp}.log"
+            cpu_file = log_dir / f"cpu_{timestamp}.log"
+            
+            log.info(f"💾 Salvando logs em {log_dir}")
+            
+            # Recuperar todo o histórico
+            serial_entries = self.capture.get_stream_content(StreamSource.SERIAL)
+            cpu_entries = self.capture.get_stream_content(StreamSource.CPU_LOG)
+            
+            # Escrever arquivos (sem cores, raw)
+            serial_file.write_text("\n".join(e.line for e in serial_entries), encoding="utf-8")
+            cpu_file.write_text("\n".join(e.line for e in cpu_entries), encoding="utf-8")
+            
+        except Exception as e:
+            log.error(f"Erro ao salvar logs: {e}")
+
     async def run_monitored(
         self,
         qemu_config: Optional[QemuConfig] = None,
@@ -231,6 +257,9 @@ class QemuMonitor:
                 pass
             
             runtime_ms = int((time.time() - start_time) * 1000)
+            
+            # Salvar logs
+            self._save_logs()
             
             return MonitorResult(
                 success=not self._crash_info,

@@ -145,8 +145,8 @@ async def handle_choice(choice: str) -> bool:
             diagnosis = await engine.analyze_crash(result.crash_info)
             
             # Relatório completo com contexto serial e CPU
-            serial_context = monitor.capture.get_serial_context(50)
-            cpu_context = monitor.capture.get_cpu_log_context(100)
+            serial_context = monitor.capture.get_serial_context(100)
+            cpu_context = monitor.capture.get_cpu_log_context(300)
             
             engine.print_full_crash_report(
                 diagnosis=diagnosis,
@@ -292,7 +292,10 @@ async def handle_choice(choice: str) -> bool:
 
 def run_tui() -> None:
     """Executa interface TUI interativa."""
+    import sys
+    
     running = True
+    console.show_cursor()
     
     while running:
         show_menu()
@@ -303,13 +306,20 @@ def run_tui() -> None:
             running = asyncio.run(handle_choice(choice))
             
             if running:
-                Prompt.ask("\n[dim]Pressione Enter para continuar[/dim]")
+                console.show_cursor()
+                sys.stdout.flush()
+                console.print("\n[dim]Pressione qualquer tecla para continuar...[/dim]")
+                import msvcrt
+                msvcrt.getch()
                 
         except KeyboardInterrupt:
             running = False
         except Exception as e:
             log.error(f"Erro: {e}")
-            Prompt.ask("\n[dim]Pressione Enter para continuar[/dim]")
+            console.show_cursor()
+            console.print("\n[dim]Pressione qualquer tecla para continuar...[/dim]")
+            import msvcrt
+            msvcrt.getch()
     
     console.print("\n[cyan]Até logo! 👋[/cyan]")
 

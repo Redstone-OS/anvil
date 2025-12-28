@@ -263,6 +263,74 @@ class DiagnosticEngine:
         
         console.print()
     
+    def _analyze_registers(self, cpu_context: list[LogEntry], rip: Optional[str]) -> list[str]:
+        """Analisa valores dos registradores em busca de anomalias."""
+        findings = []
+        import re
+        
+        # Encontrar último dump de registradores
+        last_regs = {}
+        for entry in reversed(cpu_context):
+            # Parsear linha: RAX=... RBX=...
+            matches = re.findall(r'([R|E][A-Z0-9]+)=([0-9a-fA-F]+)', entry.line)
+            for reg, val in matches:
+                if reg not in last_regs:
+                    try:
+                        last_regs[reg] = int(val, 16)
+                    except ValueError:
+                        pass
+            
+            # Se já achamos RIP e RAX, provavelmente temos um set completo
+            if "RIP" in last_regs and "RAX" in last_regs:
+                break
+        
+        if not last_regs:
+            return []
+            
+        # 1. Null Pointers
+        # Apenas registradores que costumam ser ponteiros em contextos onde 0 é inválido
+        for reg in ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"]:
+            if reg in last_regs and last_regs[reg] == 0:
+                findings.append(f"Registrador [bold]{reg}[/bold] é NULL (0x0). Se for usado como ponteiro, causará crash.")
+
+        # 2. Ponteiros suspeitos (não canônicos)
+        # Faixa buraco: 0x0000_8000_0000_0000 até 0xFFFF_7FFF_FFFF_FFFF
+        for reg, val in last_regs.items():
+            if reg in ["RIP", "RSP", "RFLAGS", "EFLAGS", "CR0", "CR2", "CR3", "CR4"]: continue
+            if len(reg) < 3: continue # Ignorar CS, SS, etc
+            
+            is_canonical = False
+            if val < 0x0000800000000000: is_canonical = True
+            elif val >= 0xFFFF800000000000: is_canonical = True
+            
+            if not is_canonical and val > 0:
+                 findings.append(f"Registrador [bold]{reg}[/bold] tem endereço não-canônico: 0x{val:016x} (Causa imediata de #GP se acessado)")
+
+        # 3. Stack Pointer inválido
+        if "RSP" in last_regs:
+            rsp = last_regs["RSP"]
+            if rsp == 0:
+                findings.append("Stack Pointer (RSP) é NULL!")
+            elif rsp < 0x1000: 
+                 findings.append(f"Stack Pointer (RSP) suspeitosamente baixo: 0x{rsp:x}")
+
+        return findings
+
+    def _colorize_line(self, line: str) -> str:
+        """Aplica cores às tags conhecidas (mesma lógica do Monitor)."""
+        import re
+        ansi_escape = re.compile(r'\x1b\[[0-9;?]*[a-zA-Z]')
+        line = ansi_escape.sub('', line)
+        
+        line = re.sub(r'\[OK\]', '[green][OK][/green]', line)
+        line = re.sub(r'\[FAIL\]', '[red bold][FAIL][/red bold]', line)
+        line = re.sub(r'\[JUMP\]', '[magenta][JUMP][/magenta]', line)
+        line = re.sub(r'\[DEBUG\]', '[dim][DEBUG][/dim]', line)
+        line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
+        line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
+        line = re.sub(r'\[ERROR\]', '[red][ERROR][/red]', line)
+        return line
+
     def print_full_crash_report(
         self,
         diagnosis: Diagnosis,
@@ -321,8 +389,17 @@ class DiagnosticEngine:
             table.add_row("RSP", exc.rsp)
         if diagnosis.symbol:
             table.add_row("Símbolo", diagnosis.symbol.name)
+            if diagnosis.symbol.file:
+                table.add_row("Arquivo", f"{diagnosis.symbol.file}:{diagnosis.symbol.line or '?'}")
         
         console.print(table)
+        
+        # Análise extra de registradores
+        reg_analysis = self._analyze_registers(cpu_context, exc.rip)
+        if reg_analysis:
+            console.print("\n[bold yellow]🔬 Análise de Registradores[/bold yellow]")
+            for analysis in reg_analysis:
+                console.print(f"  • {analysis}")
         
         # ====================================================================
         # SAÍDA SERIAL ANTES DO CRASH
@@ -330,8 +407,10 @@ class DiagnosticEngine:
         if serial_context:
             console.print("\n[bold cyan]📺 Últimas Linhas Serial (antes do crash)[/bold cyan]")
             console.print("[dim]─" * 60 + "[/dim]")
-            for entry in serial_context[-30:]:
-                console.print(f"  {entry.line}")
+            # Aumentado para 50 linhas para dar mais contexto
+            for entry in serial_context[-50:]:
+                colored = self._colorize_line(entry.line)
+                console.print(f"  {colored}")
             console.print("[dim]─" * 60 + "[/dim]")
         
         # ====================================================================
@@ -341,16 +420,21 @@ class DiagnosticEngine:
             console.print("\n[bold cyan]🖥️ Contexto CPU (registradores)[/bold cyan]")
             # Filtrar linhas relevantes (RIP, RSP, registradores, etc.)
             relevant_lines = []
-            for entry in cpu_context[-100:]:
+            # Aumentado busca para 200 linhas
+            for entry in cpu_context[-200:]:
                 line = entry.line
+                # Filtro mais permissivo ou apenas mostrar últimas N linhas se filtro for muito agressivo
+                # O usuário pediu mais info, vamos mostrar blocos contíguos de registradores
                 if any(kw in line.upper() for kw in ["RIP=", "RSP=", "RAX=", "RBX=", "RCX=", "RDX=", 
                                                        "RSI=", "RDI=", "R8=", "R9=", "R10=", "R11=",
                                                        "CR0=", "CR2=", "CR3=", "CR4=", "EFLAGS=",
-                                                       "CS=", "SS=", "DS=", "ES=", "FS=", "GS="]):
+                                                       "CS=", "SS=", "DS=", "ES=", "FS=", "GS=",
+                                                       "SMM=", "V="]):
                     relevant_lines.append(line)
             
             if relevant_lines:
-                for line in relevant_lines[-20:]:
+                # Mostrar mais linhas (últimas 40 em vez de 20)
+                for line in relevant_lines[-40:]:
                     console.print(f"  [dim]{line}[/dim]")
         
         # ====================================================================
@@ -407,7 +491,7 @@ class DiagnosticEngine:
         # ====================================================================
         console.print("\n[bold magenta]🔧 Próximos Passos Recomendados[/bold magenta]")
         console.print("  1. Executar 'anvil run --gdb' para debug interativo")
-        console.print("  2. Verificar logs em: logs/qemu-internal.log")
+        console.print("  2. Verificar logs em: anvil/src/logs/...")
         console.print("  3. Analisar binário: 'anvil inspect kernel'")
         
         console.print()

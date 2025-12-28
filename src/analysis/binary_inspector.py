@@ -20,9 +20,12 @@ class Symbol:
     address: int
     size: int = 0
     symbol_type: str = ""
+    file: Optional[str] = None
+    line: Optional[int] = None
     
     def __str__(self) -> str:
-        return f"{self.name} @ 0x{self.address:016x}"
+        loc = f" ({self.file}:{self.line})" if self.file else ""
+        return f"{self.name} @ 0x{self.address:016x}{loc}"
 
 
 @dataclass
@@ -142,20 +145,44 @@ class BinaryInspector:
         """
         wsl_path = PathResolver.windows_to_wsl(binary)
         
-        # Tentar addr2line primeiro
-        cmd = f"addr2line -f -e '{wsl_path}' 0x{address:x}"
+        # Tentar addr2line primeiro (com -C para demangle, -f para function name)
+        cmd = f"addr2line -C -f -e '{wsl_path}' 0x{address:x}"
         result = await self.wsl.run(cmd)
         
         if result.success and result.stdout.strip():
             lines = result.stdout.strip().split("\n")
-            if len(lines) >= 1 and lines[0] != "??":
-                return Symbol(
-                    name=lines[0],
-                    address=address,
-                )
+            # Output esperado:
+            # FunctionName
+            # /path/to/file.rs:123
+            
+            if len(lines) >= 2:
+                func_name = lines[0]
+                file_info = lines[1]
+                
+                if func_name != "??" and func_name != "":
+                    file_path: Optional[str] = None
+                    line_num: Optional[int] = None
+                    
+                    if ":" in file_info:
+                        # Extrair path e linha
+                        # Cuidado com paths Windows que podem ter C:\... mas addr2line roda no WSL
+                        # Normalmente output é unix style ou relative
+                        parts = file_info.rsplit(":", 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            file_path = parts[0]
+                            line_num = int(parts[1])
+                        else:
+                            file_path = file_info
+                    
+                    return Symbol(
+                        name=func_name,
+                        address=address,
+                        file=file_path,
+                        line=line_num,
+                    )
         
         # Fallback: nm e busca manual
-        cmd = f"nm '{wsl_path}' | sort -k1"
+        cmd = f"nm -C '{wsl_path}' | sort -k1"
         result = await self.wsl.run(cmd)
         
         if not result.success:

@@ -151,6 +151,14 @@ class DualStreamCapture:
         """Retorna últimas N linhas do CPU log."""
         return list(self.cpu_log_buffer)[-lines:]
     
+    def get_stream_content(self, source: StreamSource) -> list[LogEntry]:
+        """Retorna todo o conteúdo capturado de uma fonte específica."""
+        if source == StreamSource.SERIAL:
+            return list(self.serial_buffer)
+        elif source == StreamSource.CPU_LOG:
+            return list(self.cpu_log_buffer)
+        return []
+    
     def search(self, pattern: str) -> list[LogEntry]:
         """Busca padrão em todas as entradas."""
         import re
