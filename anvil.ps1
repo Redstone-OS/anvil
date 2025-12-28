@@ -69,27 +69,27 @@ function Build-Component {
             switch ($Profile) {
                 "release" {
                     # RELEASE PRODUÇÃO: Apenas ERROR, WARN, [OK]
-                    cargo build --release --no-default-features --features log_error
+                    cargo build --release
                 }
                 "release-minimal" {
                     # PRODUÇÃO: Zero logs
-                    cargo build --profile release-minimal --no-default-features --features no_logs
+                    cargo build --release
                 }
-                "release-debug" {
+                "release" {
                     # DESENVOLVIMENTO: INFO + DEBUG (sem TRACE)
-                    cargo build --profile release-debug --no-default-features --features "log_debug,self_test"
+                    cargo build --release
                 }
                 "release-trace" {
                     # DEBUGGING PROFUNDO: Máxima verbosidade (TRACE incluso)
-                    cargo build --profile release-trace --no-default-features --features "log_trace,self_test"
+                    cargo build --release
                 }
                 "release-test" {
                     # CI/CD: Logs INFO apenas
-                    cargo build --profile release-test --no-default-features --features log_info
+                    cargo build --release
                 }
                 default {
                     # DEBUG (dev profile): Usa features default (log_trace + self_test)
-                    cargo build
+                    cargo build --release
                 }
             }
         } else {
@@ -204,7 +204,7 @@ function Copy-ToQemu {
     
     # Determinar o diretório de saída do Cargo
     # Perfis customizados usam seu próprio nome como pasta
-    # debug -> debug, release -> release, release-debug -> release-debug
+    # debug -> debug, release -> release, release -> release
     if ($Profile -eq "debug") {
         $kernelDir = "debug"
         $bootloaderDir = "debug"
@@ -214,7 +214,7 @@ function Copy-ToQemu {
         $bootloaderDir = "release"
         $serviceDir = "release"
     } else {
-        # Perfis customizados (release-debug, release-trace, etc.)
+        # Perfis customizados (release, release-trace, etc.)
         $kernelDir = $Profile
         # Bootloader e serviços não têm perfis customizados, usam release
         $bootloaderDir = "release"
@@ -452,9 +452,7 @@ while ($true) {
     Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "┌─ Build ───────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "│ [1] Build (release-debug) RECOMENDADO │" -ForegroundColor Green
-    Write-Host "│ [2] Build (release-trace) Verbose     │"
-    Write-Host "│ [3] Build (release) Produção          │"
+    Write-Host "│ [1] Build (release) RECOMENDADO │" -ForegroundColor Green
     Write-Host "│ [4] Build Kernel Apenas               │"
     Write-Host "│ [5] Build Bootloader Apenas           │"
     Write-Host "│ [6] Build Serviços Apenas             │"
@@ -478,9 +476,9 @@ while ($true) {
     try {
         switch ($choice.ToUpper()) {
             "1" { 
-                # RECOMENDADO: release-debug (logs + símbolos + otimização moderada)
-                if (Build-All "release-debug") {
-                    Copy-ToQemu "release-debug"
+                # RECOMENDADO: release (logs + símbolos + otimização moderada)
+                if (Build-All "release") {
+                    Copy-ToQemu "release"
                 }
                 Pause 
             }
@@ -499,7 +497,7 @@ while ($true) {
                 Pause 
             }
             "4" { 
-                Build-Component "Kernel" "forge" "x86_64-unknown-none" "release-debug"
+                Build-Component "Kernel" "forge" "x86_64-unknown-none" "release"
                 Pause 
             }
             "5" { 
