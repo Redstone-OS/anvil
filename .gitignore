@@ -1,5 +1,5 @@
 # Python
-__pycache__/
+/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -22,3 +22,4 @@ env/
 # Arquivos temporários
 *.tmp
 *.swp
+src/analysis/__pycache__/*

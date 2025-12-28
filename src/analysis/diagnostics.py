@@ -481,18 +481,18 @@ class DiagnosticEngine:
         # ====================================================================
         # SUGESTÕES
         # ====================================================================
-        if diagnosis.suggestions:
-            console.print("\n[bold green]💡 Sugestões de Correção[/bold green]")
-            for i, suggestion in enumerate(diagnosis.suggestions, 1):
-                console.print(f"  {i}. {suggestion}")
+     #   if diagnosis.suggestions:
+      #      console.print("\n[bold green]💡 Sugestões de Correção[/bold green]")
+      #      for i, suggestion in enumerate(diagnosis.suggestions, 1):
+      #          console.print(f"  {i}. {suggestion}")
         
         # ====================================================================
         # PRÓXIMOS PASSOS
         # ====================================================================
-        console.print("\n[bold magenta]🔧 Próximos Passos Recomendados[/bold magenta]")
-        console.print("  1. Executar 'anvil run --gdb' para debug interativo")
-        console.print("  2. Verificar logs em: anvil/src/logs/...")
-        console.print("  3. Analisar binário: 'anvil inspect kernel'")
+      #  console.print("\n[bold magenta]🔧 Próximos Passos Recomendados[/bold magenta]")
+     #   console.print("  1. Executar 'anvil run --gdb' para debug interativo")
+     #   console.print("  2. Verificar logs em: anvil/src/logs/...")
+      #  console.print("  3. Analisar binário: 'anvil inspect kernel'")
         
-        console.print()
+       # console.print()
 
