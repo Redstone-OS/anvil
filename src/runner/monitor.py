@@ -111,13 +111,33 @@ class QemuMonitor:
         
         return None
     
+    def _colorize_serial_line(self, line: str) -> str:
+        """Aplica cores às tags conhecidas e remove ANSI codes antigos."""
+        import re
+        
+        # Remover códigos ANSI existentes (escape sequences)
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+        line = ansi_escape.sub('', line)
+        
+        # Colorir tags conhecidas
+        line = re.sub(r'\[OK\]', '[green][OK][/green]', line)
+        line = re.sub(r'\[FAIL\]', '[red bold][FAIL][/red bold]', line)
+        line = re.sub(r'\[JUMP\]', '[magenta][JUMP][/magenta]', line)
+        line = re.sub(r'\[DEBUG\]', '[dim][DEBUG][/dim]', line)
+        line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
+        line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
+        line = re.sub(r'\[ERROR\]', '[red][ERROR][/red]', line)
+        
+        return line
+    
     def _on_log_entry(self, entry: LogEntry) -> None:
         """Callback para cada linha de log."""
         from runner.streams import StreamSource
         
         # Exibir SERIAL em tempo real (apenas serial, não CPU)
         if self.show_serial and entry.source == StreamSource.SERIAL:
-            console.print(entry.line)
+            colored_line = self._colorize_serial_line(entry.line)
+            console.print(colored_line)
         
         # Detectar exceção (no CPU log)
         crash = self._detect_exception(entry)
