@@ -137,13 +137,23 @@ async def handle_choice(choice: str) -> bool:
             debug_flags=config.qemu.logging.flags,
         )
         
-        monitor = QemuMonitor(paths, config, stop_on_exception=True)
+        monitor = QemuMonitor(paths, config, stop_on_exception=True, show_serial=True)
         result = await monitor.run_monitored(qemu_config)
         
         if result.crashed and result.crash_info:
             engine = DiagnosticEngine(paths, config)
             diagnosis = await engine.analyze_crash(result.crash_info)
-            engine.print_diagnosis(diagnosis)
+            
+            # Relatório completo com contexto serial e CPU
+            serial_context = monitor.capture.get_serial_context(50)
+            cpu_context = monitor.capture.get_cpu_log_context(100)
+            
+            engine.print_full_crash_report(
+                diagnosis=diagnosis,
+                crash_list=result.crash_list,
+                serial_context=serial_context,
+                cpu_context=cpu_context,
+            )
         
     elif choice == "6":
         # Run QEMU + GDB

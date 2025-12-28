@@ -36,6 +36,7 @@ class MonitorResult:
     runtime_ms: int
     crashed: bool = False
     crash_info: Optional[CrashInfo] = None
+    crash_list: list[CrashInfo] = field(default_factory=list)  # Todas as exceções
     total_lines: int = 0
     
     
@@ -65,15 +66,18 @@ class QemuMonitor:
         config: AnvilConfig,
         on_exception: Optional[Callable[[CrashInfo], None]] = None,
         stop_on_exception: bool = True,
+        show_serial: bool = True,
     ):
         self.paths = paths
         self.config = config
         self.on_exception = on_exception
         self.stop_on_exception = stop_on_exception
+        self.show_serial = show_serial
         
         self.runner = QemuRunner(paths, config)
         self.capture = DualStreamCapture()
         self._crash_info: Optional[CrashInfo] = None
+        self._crash_list: list[CrashInfo] = []  # Todas as exceções
         self._last_rip: Optional[str] = None
         self._should_stop = False
     
@@ -109,11 +113,18 @@ class QemuMonitor:
     
     def _on_log_entry(self, entry: LogEntry) -> None:
         """Callback para cada linha de log."""
-        # Detectar exceção
+        from runner.streams import StreamSource
+        
+        # Exibir SERIAL em tempo real (apenas serial, não CPU)
+        if self.show_serial and entry.source == StreamSource.SERIAL:
+            console.print(entry.line)
+        
+        # Detectar exceção (no CPU log)
         crash = self._detect_exception(entry)
         
         if crash:
             self._crash_info = crash
+            self._crash_list.append(crash)  # Guardar todas
             console.print(f"\n[red bold]💥 EXCEÇÃO DETECTADA: {crash}[/red bold]")
             
             if self.on_exception:
@@ -206,6 +217,7 @@ class QemuMonitor:
                 runtime_ms=runtime_ms,
                 crashed=self._crash_info is not None,
                 crash_info=self._crash_info,
+                crash_list=self._crash_list,
                 total_lines=self.capture.total_lines,
             )
             

@@ -262,3 +262,153 @@ class DiagnosticEngine:
                 console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]: {pattern.diagnosis}")
         
         console.print()
+    
+    def print_full_crash_report(
+        self,
+        diagnosis: Diagnosis,
+        crash_list: list,  # list[CrashInfo]
+        serial_context: list[LogEntry],
+        cpu_context: list[LogEntry],
+    ) -> None:
+        """
+        Imprime relatório completo de crash com análise detalhada.
+        
+        Inclui:
+        - Timeline de exceções
+        - Contexto serial antes do crash
+        - Análise do CPU log
+        - Padrões detectados
+        - Causa provável e sugestões
+        """
+        from rich.panel import Panel
+        from rich.table import Table
+        
+        exc = diagnosis.exception
+        
+        # ====================================================================
+        # CABEÇALHO
+        # ====================================================================
+        console.print()
+        console.print(Panel(
+            f"[bold red]💥 RELATÓRIO DE CRASH - {exc.name} ({exc.code})[/bold red]",
+            border_style="red",
+            title="Análise Completa",
+        ))
+        
+        # ====================================================================
+        # TIMELINE DE EXCEÇÕES
+        # ====================================================================
+        if len(crash_list) > 1:
+            console.print("\n[bold cyan]📊 Timeline de Exceções[/bold cyan]")
+            for i, crash in enumerate(crash_list, 1):
+                ts = crash.timestamp.strftime("%H:%M:%S.%f")[:-3]
+                console.print(f"  {i}. [{ts}] {crash}")
+        
+        # ====================================================================
+        # INFORMAÇÕES DO CRASH PRINCIPAL
+        # ====================================================================
+        console.print("\n[bold cyan]🔍 Detalhes da Exceção[/bold cyan]")
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Campo", style="yellow")
+        table.add_column("Valor", style="white")
+        
+        table.add_row("Tipo", f"{exc.name} ({exc.code})")
+        if exc.rip:
+            table.add_row("RIP", exc.rip)
+        if exc.cr2:
+            table.add_row("CR2", exc.cr2)
+        if exc.rsp:
+            table.add_row("RSP", exc.rsp)
+        if diagnosis.symbol:
+            table.add_row("Símbolo", diagnosis.symbol.name)
+        
+        console.print(table)
+        
+        # ====================================================================
+        # SAÍDA SERIAL ANTES DO CRASH
+        # ====================================================================
+        if serial_context:
+            console.print("\n[bold cyan]📺 Últimas Linhas Serial (antes do crash)[/bold cyan]")
+            console.print("[dim]─" * 60 + "[/dim]")
+            for entry in serial_context[-30:]:
+                console.print(f"  {entry.line}")
+            console.print("[dim]─" * 60 + "[/dim]")
+        
+        # ====================================================================
+        # ANÁLISE DO CPU LOG
+        # ====================================================================
+        if cpu_context:
+            console.print("\n[bold cyan]🖥️ Contexto CPU (registradores)[/bold cyan]")
+            # Filtrar linhas relevantes (RIP, RSP, registradores, etc.)
+            relevant_lines = []
+            for entry in cpu_context[-100:]:
+                line = entry.line
+                if any(kw in line.upper() for kw in ["RIP=", "RSP=", "RAX=", "RBX=", "RCX=", "RDX=", 
+                                                       "RSI=", "RDI=", "R8=", "R9=", "R10=", "R11=",
+                                                       "CR0=", "CR2=", "CR3=", "CR4=", "EFLAGS=",
+                                                       "CS=", "SS=", "DS=", "ES=", "FS=", "GS="]):
+                    relevant_lines.append(line)
+            
+            if relevant_lines:
+                for line in relevant_lines[-20:]:
+                    console.print(f"  [dim]{line}[/dim]")
+        
+        # ====================================================================
+        # DISASSEMBLY
+        # ====================================================================
+        if diagnosis.disassembly and diagnosis.disassembly.instructions:
+            console.print("\n[bold cyan]📋 Código no RIP[/bold cyan]")
+            
+            rip = 0
+            if exc.rip:
+                try:
+                    rip = int(exc.rip.replace("RIP=", "").replace("0x", ""), 16)
+                except ValueError:
+                    pass
+            
+            for addr, _, asm in diagnosis.disassembly.instructions[:10]:
+                marker = "→" if addr == rip else " "
+                style = "bold red" if addr == rip else "dim"
+                console.print(f"  {marker} [{style}]0x{addr:016x}: {asm}[/{style}]")
+        
+        # ====================================================================
+        # PADRÕES CONHECIDOS
+        # ====================================================================
+        if diagnosis.matching_patterns:
+            console.print("\n[bold cyan]📚 Padrões Conhecidos Detectados[/bold cyan]")
+            for pattern in diagnosis.matching_patterns:
+                severity_color = {
+                    Severity.INFO: "blue",
+                    Severity.WARNING: "yellow",
+                    Severity.CRITICAL: "red",
+                }[pattern.severity]
+                console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]")
+                console.print(f"    [dim]{pattern.diagnosis}[/dim]")
+        
+        # ====================================================================
+        # CAUSA PROVÁVEL
+        # ====================================================================
+        console.print("\n[bold yellow]🎯 Causa Provável[/bold yellow]")
+        console.print(Panel(
+            diagnosis.probable_cause,
+            border_style="yellow",
+        ))
+        
+        # ====================================================================
+        # SUGESTÕES
+        # ====================================================================
+        if diagnosis.suggestions:
+            console.print("\n[bold green]💡 Sugestões de Correção[/bold green]")
+            for i, suggestion in enumerate(diagnosis.suggestions, 1):
+                console.print(f"  {i}. {suggestion}")
+        
+        # ====================================================================
+        # PRÓXIMOS PASSOS
+        # ====================================================================
+        console.print("\n[bold magenta]🔧 Próximos Passos Recomendados[/bold magenta]")
+        console.print("  1. Executar 'anvil run --gdb' para debug interativo")
+        console.print("  2. Verificar logs em: logs/qemu-internal.log")
+        console.print("  3. Analisar binário: 'anvil inspect kernel'")
+        
+        console.print()
+

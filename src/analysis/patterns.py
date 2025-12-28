@@ -3,16 +3,35 @@ Anvil Analysis - Padrões conhecidos de erros
 """
 
 import re
+import functools
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 
+# Ordem de severidade para comparação
+SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
+
+
+@functools.total_ordering
 class Severity(Enum):
     """Severidade do problema."""
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
+    
+    def __lt__(self, other):
+        if isinstance(other, Severity):
+            return SEVERITY_ORDER[self.value] < SEVERITY_ORDER[other.value]
+        return NotImplemented
+    
+    def __eq__(self, other):
+        if isinstance(other, Severity):
+            return self.value == other.value
+        return NotImplemented
+    
+    def __hash__(self):
+        return hash(self.value)
 
 
 @dataclass
