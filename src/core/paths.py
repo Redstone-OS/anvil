@@ -52,7 +52,7 @@ class PathResolver:
     @property
     def assets(self) -> Path:
         """Caminho de assets do Anvil."""
-        return self.anvil_root / "assets"
+        return self.anvil_root / "src" / "assets"
     
     @property
     def ovmf(self) -> Path:

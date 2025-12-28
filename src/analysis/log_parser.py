@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Iterator
 from collections import deque
 
-from anvil.analysis.exception_detector import ExceptionDetector, CpuException
+from analysis.exception_detector import ExceptionDetector, CpuException
 
 
 @dataclass

@@ -11,13 +11,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from anvil.core.config import AnvilConfig
-from anvil.core.paths import PathResolver
-from anvil.core.logger import console
-from anvil.analysis.exception_detector import CpuException, ExceptionContext
-from anvil.analysis.binary_inspector import BinaryInspector, Disassembly, Symbol
-from anvil.analysis.patterns import find_matching_patterns, Pattern, Severity
-from anvil.runner.streams import LogEntry
+from core.config import AnvilConfig
+from core.paths import PathResolver
+from core.logger import console
+from analysis.exception_detector import CpuException, ExceptionContext
+from analysis.binary_inspector import BinaryInspector, Disassembly, Symbol
+from analysis.patterns import find_matching_patterns, Pattern, Severity
+from runner.streams import LogEntry
 
 
 @dataclass
@@ -62,12 +62,33 @@ class DiagnosticEngine:
     
     async def analyze_crash(
         self,
-        exception: CpuException,
-        context: list[LogEntry],
+        crash_info,  # CrashInfo from runner.monitor
     ) -> Diagnosis:
         """
         Analisa crash e gera diagnóstico completo.
         """
+        from analysis.exception_detector import CpuException
+        
+        # Criar CpuException a partir do CrashInfo
+        exception = CpuException(
+            timestamp=crash_info.timestamp,
+            vector=0,  # Será determinado pelo código abaixo
+            name=crash_info.exception_type,
+            code=crash_info.exception_code,
+            rip=crash_info.rip,
+            cr2=crash_info.cr2,
+            raw_line="",
+        )
+        
+        # Mapear código para vector
+        code_to_vector = {
+            "#DE": 0x00, "#UD": 0x06, "#DF": 0x08, 
+            "#GP": 0x0D, "#PF": 0x0E,
+        }
+        exception.vector = code_to_vector.get(crash_info.exception_code, 0)
+        
+        context = crash_info.context_lines
+        
         diagnosis = Diagnosis(
             timestamp=datetime.now(),
             exception=exception,
@@ -78,17 +99,11 @@ class DiagnosticEngine:
         context_text = "\n".join(e.line for e in context)
         diagnosis.matching_patterns = find_matching_patterns(context_text)
         
-        # Adicionar padrão da exceção se não encontrado
-        if exception.raw_line:
-            exc_patterns = find_matching_patterns(exception.raw_line)
-            for p in exc_patterns:
-                if p not in diagnosis.matching_patterns:
-                    diagnosis.matching_patterns.append(p)
-        
         # 2. Localizar símbolo no RIP
         if exception.rip:
             try:
-                rip_addr = int(exception.rip.replace("0x", ""), 16)
+                rip_str = exception.rip.replace("RIP=", "").replace("0x", "")
+                rip_addr = int(rip_str, 16)
                 kernel_path = self.paths.kernel_binary()
                 
                 if kernel_path.exists():

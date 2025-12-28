@@ -9,8 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from anvil.core.logger import log
-from anvil.core.exceptions import ValidationError
+from core.logger import log
+from core.exceptions import ValidationError
 
 
 class ArtifactType(Enum):

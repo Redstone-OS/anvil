@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from anvil.core.config import AnvilConfig
-from anvil.core.logger import log
-from anvil.core.paths import PathResolver
+from core.config import AnvilConfig
+from core.logger import log
+from core.paths import PathResolver
 
 
 @dataclass  

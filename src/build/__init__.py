@@ -2,10 +2,10 @@
 Anvil Build - Sistema de build para RedstoneOS
 """
 
-from anvil.build.cargo import CargoBuilder
-from anvil.build.artifacts import ArtifactValidator
-from anvil.build.initramfs import InitramfsBuilder
-from anvil.build.dist import DistBuilder
+from build.cargo import CargoBuilder
+from build.artifacts import ArtifactValidator
+from build.initramfs import InitramfsBuilder
+from build.dist import DistBuilder
 
 __all__ = [
     "CargoBuilder",

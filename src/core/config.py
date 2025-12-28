@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 import toml
 
-from anvil.core.exceptions import ConfigError
+from core.exceptions import ConfigError
 
 
 @dataclass

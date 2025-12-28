@@ -8,9 +8,9 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from anvil.core.config import load_config
-from anvil.core.paths import PathResolver
-from anvil.core.logger import log, console
+from core.config import load_config
+from core.paths import PathResolver
+from core.logger import log, console
 
 
 def show_menu() -> None:
@@ -60,15 +60,15 @@ async def handle_choice(choice: str) -> bool:
     Returns:
         True para continuar, False para sair
     """
-    from anvil.build.cargo import CargoBuilder
-    from anvil.build.dist import DistBuilder
-    from anvil.build.initramfs import InitramfsBuilder
-    from anvil.build.artifacts import ArtifactValidator
-    from anvil.runner.monitor import QemuMonitor
-    from anvil.runner.qemu import QemuConfig
-    from anvil.analysis.binary_inspector import BinaryInspector
-    from anvil.analysis.diagnostics import DiagnosticEngine
-    from anvil.analysis.log_parser import LogParser
+    from build.cargo import CargoBuilder
+    from build.dist import DistBuilder
+    from build.initramfs import InitramfsBuilder
+    from build.artifacts import ArtifactValidator
+    from runner.monitor import QemuMonitor
+    from runner.qemu import QemuConfig
+    from analysis.binary_inspector import BinaryInspector
+    from analysis.diagnostics import DiagnosticEngine
+    from analysis.log_parser import LogParser
     
     config = load_config()
     paths = PathResolver(config.project_root)
@@ -142,10 +142,7 @@ async def handle_choice(choice: str) -> bool:
         
         if result.crashed and result.crash_info:
             engine = DiagnosticEngine(paths, config)
-            diagnosis = await engine.analyze_crash(
-                result.crash_info.exception_type,
-                result.crash_info.context_lines,
-            )
+            diagnosis = await engine.analyze_crash(result.crash_info)
             engine.print_diagnosis(diagnosis)
         
     elif choice == "6":

@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from anvil.core.logger import log
-from anvil.runner.wsl import WslExecutor
-from anvil.core.paths import PathResolver
+from core.logger import log
+from runner.wsl import WslExecutor
+from core.paths import PathResolver
 
 
 @dataclass

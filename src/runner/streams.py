@@ -10,7 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, AsyncIterator, Callable
 
-from anvil.core.paths import PathResolver
+from core.paths import PathResolver
 
 
 class StreamSource(Enum):

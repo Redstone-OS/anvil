@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from anvil.core.config import AnvilConfig
-from anvil.core.logger import log
-from anvil.core.paths import PathResolver
-from anvil.core.exceptions import BuildError
+from core.config import AnvilConfig
+from core.logger import log
+from core.paths import PathResolver
+from core.exceptions import BuildError
 
 
 @dataclass

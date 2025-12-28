@@ -8,11 +8,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable, Any
 
-from anvil.core.config import AnvilConfig
-from anvil.core.logger import log, console
-from anvil.core.paths import PathResolver
-from anvil.runner.qemu import QemuRunner, QemuConfig
-from anvil.runner.streams import DualStreamCapture, LogEntry, StreamSource
+from core.config import AnvilConfig
+from core.logger import log, console
+from core.paths import PathResolver
+from runner.qemu import QemuRunner, QemuConfig
+from runner.streams import DualStreamCapture, LogEntry, StreamSource
 
 
 @dataclass

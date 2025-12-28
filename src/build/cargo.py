@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from anvil.core.logger import log, console
-from anvil.core.exceptions import BuildError
+from core.logger import log, console
+from core.exceptions import BuildError
 
 
 @dataclass

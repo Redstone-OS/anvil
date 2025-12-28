@@ -11,18 +11,18 @@ from rich.console import Console
 from rich.table import Table
 
 from anvil import __version__
-from anvil.core.config import load_config, AnvilConfig
-from anvil.core.paths import PathResolver
-from anvil.core.logger import log, console, setup_logging
-from anvil.build.cargo import CargoBuilder
-from anvil.build.artifacts import ArtifactValidator
-from anvil.build.initramfs import InitramfsBuilder
-from anvil.build.dist import DistBuilder
-from anvil.runner.monitor import QemuMonitor
-from anvil.runner.qemu import QemuConfig
-from anvil.analysis.diagnostics import DiagnosticEngine
-from anvil.analysis.log_parser import LogParser
-from anvil.analysis.binary_inspector import BinaryInspector
+from core.config import load_config, AnvilConfig
+from core.paths import PathResolver
+from core.logger import log, console, setup_logging
+from build.cargo import CargoBuilder
+from build.artifacts import ArtifactValidator
+from build.initramfs import InitramfsBuilder
+from build.dist import DistBuilder
+from runner.monitor import QemuMonitor
+from runner.qemu import QemuConfig
+from analysis.diagnostics import DiagnosticEngine
+from analysis.log_parser import LogParser
+from analysis.binary_inspector import BinaryInspector
 
 
 # CLI App
@@ -396,7 +396,7 @@ def env():
 @app.command()
 def menu():
     """Launch interactive TUI menu."""
-    from anvil.tui import run_tui
+    from tui import run_tui
     run_tui()
 
 
