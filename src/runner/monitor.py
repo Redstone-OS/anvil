@@ -166,9 +166,15 @@ class QemuMonitor:
             log_dir = self.paths.anvil_root / "src" / "log"
             log_dir.mkdir(parents=True, exist_ok=True)
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            serial_file = log_dir / f"serial_{timestamp}.log"
-            cpu_file = log_dir / f"cpu_{timestamp}.log"
+            # Limpar logs anteriores
+            for f in log_dir.glob("*.log"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            
+            serial_file = log_dir / "serial.log"
+            cpu_file = log_dir / "cpu.log"
             
             log.info(f"💾 Salvando logs em {log_dir}")
             

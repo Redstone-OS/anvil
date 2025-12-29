@@ -13,9 +13,12 @@ from core.paths import PathResolver
 from core.logger import log, console
 
 
+
 def show_menu() -> None:
     """Exibe menu principal."""
-    console.clear()
+    import os
+    os.system('cls')  # Força limpeza no Windows
+    console.clear()   # Rich clear para garantir estado interno
     
     console.print(Panel(
         "[bold cyan]🔨 Anvil - RedstoneOS[/bold cyan]\n"
@@ -51,6 +54,22 @@ def show_menu() -> None:
     console.print("[yellow]│[/yellow] [red][Q][/red] Quit                            [yellow]│[/yellow]")
     console.print("[yellow]└─────────────────────────────────────┘[/yellow]")
     console.print()
+
+
+
+def wait_key() -> None:
+    """Aguardar uma tecla para continuar, limpando buffer antes."""
+    import msvcrt
+    import sys
+    
+    console.print("\n[dim]Pressione qualquer tecla para continuar...[/dim]")
+    sys.stdout.flush()
+    
+    # Limpar buffer de entrada
+    while msvcrt.kbhit():
+        msvcrt.getch()
+        
+    msvcrt.getch()
 
 
 async def handle_choice(choice: str) -> bool:
@@ -293,6 +312,7 @@ async def handle_choice(choice: str) -> bool:
 def run_tui() -> None:
     """Executa interface TUI interativa."""
     import sys
+    import msvcrt
     
     running = True
     console.show_cursor()
@@ -300,26 +320,37 @@ def run_tui() -> None:
     while running:
         show_menu()
         
-        choice = Prompt.ask("Selecione")
+        console.print("[bold]Selecione:[/bold] ", end="")
+        sys.stdout.flush()
         
+        # Ler tecla diretamente sem Enter
         try:
+            # Limpar buffer antes de ler
+            while msvcrt.kbhit():
+                msvcrt.getch()
+                
+            char = msvcrt.getch()
+            # Converter bytes para str
+            try:
+                choice = char.decode('utf-8').upper()
+            except:
+                choice = '?'
+                
+            print(choice) # Echo da escolha
+            
             running = asyncio.run(handle_choice(choice))
             
             if running:
                 console.show_cursor()
                 sys.stdout.flush()
-                console.print("\n[dim]Pressione qualquer tecla para continuar...[/dim]")
-                import msvcrt
-                msvcrt.getch()
+                wait_key()
                 
         except KeyboardInterrupt:
             running = False
         except Exception as e:
             log.error(f"Erro: {e}")
             console.show_cursor()
-            console.print("\n[dim]Pressione qualquer tecla para continuar...[/dim]")
-            import msvcrt
-            msvcrt.getch()
+            wait_key()
     
     console.print("\n[cyan]Até logo! 👋[/cyan]")
 
