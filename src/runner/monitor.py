@@ -145,6 +145,10 @@ class QemuMonitor:
         crash = self._detect_exception(entry)
         
         if crash:
+            # Pequeno delay para permitir que logs da serial cheguem
+            import time
+            time.sleep(1)
+            
             self._crash_info = crash
             self._crash_list.append(crash)  # Guardar todas
             console.print(f"\n[red bold]💥 EXCEÇÃO DETECTADA: {crash}[/red bold]")
@@ -222,7 +226,6 @@ class QemuMonitor:
             while True:
                 # Verificar se deve parar
                 if self._should_stop:
-                    log.warning("Parando QEMU devido a exceção detectada")
                     await self.runner.stop()
                     break
                 

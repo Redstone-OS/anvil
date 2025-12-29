@@ -353,15 +353,7 @@ class DiagnosticEngine:
         
         exc = diagnosis.exception
         
-        # ====================================================================
-        # CABEÇALHO
-        # ====================================================================
-        console.print()
-        console.print(Panel(
-            f"[bold red]💥 RELATÓRIO DE CRASH - {exc.name} ({exc.code})[/bold red]",
-            border_style="red",
-            title="Análise Completa",
-        ))
+
         
         # ====================================================================
         # TIMELINE DE EXCEÇÕES
@@ -372,27 +364,6 @@ class DiagnosticEngine:
                 ts = crash.timestamp.strftime("%H:%M:%S.%f")[:-3]
                 console.print(f"  {i}. [{ts}] {crash}")
         
-        # ====================================================================
-        # INFORMAÇÕES DO CRASH PRINCIPAL
-        # ====================================================================
-        console.print("\n[bold cyan]🔍 Detalhes da Exceção[/bold cyan]")
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column("Campo", style="yellow")
-        table.add_column("Valor", style="white")
-        
-        table.add_row("Tipo", f"{exc.name} ({exc.code})")
-        if exc.rip:
-            table.add_row("RIP", exc.rip)
-        if exc.cr2:
-            table.add_row("CR2", exc.cr2)
-        if exc.rsp:
-            table.add_row("RSP", exc.rsp)
-        if diagnosis.symbol:
-            table.add_row("Símbolo", diagnosis.symbol.name)
-            if diagnosis.symbol.file:
-                table.add_row("Arquivo", f"{diagnosis.symbol.file}:{diagnosis.symbol.line or '?'}")
-        
-        console.print(table)
         
         # Análise extra de registradores
         reg_analysis = self._analyze_registers(cpu_context, exc.rip)
@@ -401,42 +372,7 @@ class DiagnosticEngine:
             for analysis in reg_analysis:
                 console.print(f"  • {analysis}")
         
-        # ====================================================================
-        # SAÍDA SERIAL ANTES DO CRASH
-        # ====================================================================
-       # if serial_context:
-       #     console.print("\n[bold cyan]📺 Últimas Linhas Serial (antes do crash)[/bold cyan]")
-        #    console.print("[dim]─" * 60 + "[/dim]")
-       #     # Aumentado para 50 linhas para dar mais contexto
-       #     for entry in serial_context[-50:]:
-        #        colored = self._colorize_line(entry.line)
-        #        console.print(f"  {colored}")
-       #     console.print("[dim]─" * 60 + "[/dim]")
-        
-        # ====================================================================
-        # ANÁLISE DO CPU LOG
-        # ====================================================================
-       # if cpu_context:
-        #    console.print("\n[bold cyan]🖥️ Contexto CPU (registradores)[/bold cyan]")
-            # Filtrar linhas relevantes (RIP, RSP, registradores, etc.)
-            # relevant_lines = []
-            # Aumentado busca para 200 linhas
-          #  for entry in cpu_context[-400:]:
-          #      line = entry.line
-                # Filtro mais permissivo ou apenas mostrar últimas N linhas se filtro for muito agressivo
-                # O usuário pediu mais info, vamos mostrar blocos contíguos de registradores
-              #  if any(kw in line.upper() for kw in ["RIP=", "RSP=", "RAX=", "RBX=", "RCX=", "RDX=", 
-             #                                          "RSI=", "RDI=", "R8=", "R9=", "R10=", "R11=",
-             #                                          "CR0=", "CR2=", "CR3=", "CR4=", "EFLAGS=",
-             #                                          "CS=", "SS=", "DS=", "ES=", "FS=", "GS=",
-             #                                          "SMM=", "V="]):
-                #    relevant_lines.append(line)
-            
-          #  if relevant_lines:
-          #      # Mostrar mais linhas (últimas 40 em vez de 20)
-           #     for line in relevant_lines[-40:]:
-          #          console.print(f"  [dim]{line}[/dim]")
-        
+
         # ====================================================================
         # DISASSEMBLY
         # ====================================================================
