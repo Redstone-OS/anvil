@@ -24,3 +24,4 @@ env/
 *.tmp
 *.swp
 src/analysis/__pycache__/*
+src/assets/initramfs/system/core/*
