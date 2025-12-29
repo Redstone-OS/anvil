@@ -152,7 +152,7 @@ class QemuMonitor:
             
             self._crash_info = crash
             self._crash_list.append(crash)  # Guardar todas
-            console.print(f"\n[red bold]💥 EXCEÇÃO DETECTADA: {crash}[/red bold]")
+            # console.print(f"\n[red bold]💥 EXCEÇÃO DETECTADA: {crash}[/red bold]")
             
             if self.on_exception:
                 self.on_exception(crash)
