@@ -125,6 +125,7 @@ class QemuMonitor:
         line = re.sub(r'\[OK\]', '[green][OK][/green]', line)
         line = re.sub(r'\[FAIL\]', '[red bold][FAIL][/red bold]', line)
         line = re.sub(r'\[JUMP\]', '[magenta][JUMP][/magenta]', line)
+        line = re.sub(r'\[TRACE\]', '[purple][TRACE][/purple]', line)
         line = re.sub(r'\[DEBUG\]', '[dim][DEBUG][/dim]', line)
         line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
         line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
