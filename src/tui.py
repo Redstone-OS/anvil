@@ -32,13 +32,14 @@ def show_menu() -> None:
     console.print("[yellow]│[/yellow] [dim][2][/dim] Build Kernel Only               [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][3][/dim] Build Bootloader Only           [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][4][/dim] Build Services Only             [yellow]│[/yellow]")
-    console.print("[yellow]│[/yellow] [green][V][/green] Create VDI Image               [yellow]│[/yellow]")
+    console.print("[yellow]│[/yellow] [green][V][/green] Create VDI Image                [yellow]│[/yellow]")
     console.print("[yellow]└─────────────────────────────────────┘[/yellow]")
     
     console.print()
     console.print("[yellow]┌─ Run ───────────────────────────────┐[/yellow]")
     console.print("[yellow]│[/yellow] [green][5][/green] Run QEMU (com monitoramento)    [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][6][/dim] Run QEMU + GDB                  [yellow]│[/yellow]")
+    console.print("[yellow]│[/yellow] [green][L][/green] Listen Serial (Pipe)            [yellow]│[/yellow]")
     console.print("[yellow]└─────────────────────────────────────┘[/yellow]")
     
     console.print()
@@ -90,6 +91,7 @@ async def handle_choice(choice: str) -> bool:
     from analysis.binary_inspector import BinaryInspector
     from analysis.diagnostics import DiagnosticEngine
     from analysis.log_parser import LogParser
+    from runner.serial import PipeSerialListener
     
     config = load_config()
     paths = PathResolver(config.project_root)
@@ -205,6 +207,16 @@ async def handle_choice(choice: str) -> bool:
         monitor = QemuMonitor(paths, config, stop_on_exception=False)
         await monitor.run_monitored(qemu_config)
         
+    elif choice == "L":
+        # Listen Serial (Pipe)
+        log.header("Servidor Serial Pipe")
+        pipe_path = Prompt.ask("Caminho do Pipe", default=r"\\.\pipe\VBoxCom1")
+        listener = PipeSerialListener(pipe_path)
+        try:
+            await listener.start()
+        except KeyboardInterrupt:
+            listener.stop()
+            
     elif choice == "7":
         # Analyze last log
         log.header("Analisando Log")

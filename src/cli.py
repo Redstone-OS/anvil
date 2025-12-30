@@ -24,6 +24,7 @@ from runner.qemu import QemuConfig
 from analysis.diagnostics import DiagnosticEngine
 from analysis.log_parser import LogParser
 from analysis.binary_inspector import BinaryInspector
+from runner.serial import PipeSerialListener
 
 
 # CLI App
@@ -159,6 +160,21 @@ async def _vdi_async(profile: str, no_build: bool):
     
     image_builder = ImageBuilder(paths, config)
     await image_builder.build_vdi(profile)
+
+
+@app.command()
+def listen(
+    pipe: str = typer.Argument(r"\\.\pipe\VBoxCom1", help="Named pipe path (Windows)"),
+):
+    """Listen for serial logs via Named Pipe (VirtualBox)."""
+    setup_logging()
+    
+    listener = PipeSerialListener(pipe)
+    try:
+        asyncio.run(listener.start())
+    except KeyboardInterrupt:
+        log.info("Parando listener serial...")
+        listener.stop()
 
 
 # ============================================================================
