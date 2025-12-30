@@ -18,6 +18,7 @@ from build.cargo import CargoBuilder
 from build.artifacts import ArtifactValidator
 from build.initramfs import InitramfsBuilder
 from build.dist import DistBuilder
+from build.image import ImageBuilder
 from runner.monitor import QemuMonitor
 from runner.qemu import QemuConfig
 from analysis.diagnostics import DiagnosticEngine
@@ -132,6 +133,32 @@ async def _build_async(
         await initramfs_builder.build(profile)
     
     log.success("Build concluído!")
+
+
+# ============================================================================
+# Image Commands
+# ============================================================================
+
+@app.command()
+def vdi(
+    profile: str = typer.Option("release", "--profile", "-p", help="Build profile"),
+    no_build: bool = typer.Option(False, "--no-build", help="Skip build step"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+):
+    """Create a VDI disk image of RedstoneOS."""
+    setup_logging(verbose=verbose)
+    asyncio.run(_vdi_async(profile, no_build))
+
+
+async def _vdi_async(profile: str, no_build: bool):
+    paths, config = get_context()
+    
+    # Garantir que o build está pronto
+    if not no_build:
+        await _build_async(profile, False, False, False, False)
+    
+    image_builder = ImageBuilder(paths, config)
+    await image_builder.build_vdi(profile)
 
 
 # ============================================================================

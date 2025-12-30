@@ -32,6 +32,7 @@ def show_menu() -> None:
     console.print("[yellow]│[/yellow] [dim][2][/dim] Build Kernel Only               [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][3][/dim] Build Bootloader Only           [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][4][/dim] Build Services Only             [yellow]│[/yellow]")
+    console.print("[yellow]│[/yellow] [green][V][/green] Create VDI Image               [yellow]│[/yellow]")
     console.print("[yellow]└─────────────────────────────────────┘[/yellow]")
     
     console.print()
@@ -82,6 +83,7 @@ async def handle_choice(choice: str) -> bool:
     from build.cargo import CargoBuilder
     from build.dist import DistBuilder
     from build.initramfs import InitramfsBuilder
+    from build.image import ImageBuilder
     from build.artifacts import ArtifactValidator
     from runner.monitor import QemuMonitor
     from runner.qemu import QemuConfig
@@ -147,6 +149,21 @@ async def handle_choice(choice: str) -> bool:
         for svc in config.components.services:
             svc_path = paths.services / svc.name
             await builder.build(svc.name, svc_path, target=svc.target, profile="release")
+        
+    elif choice == "V":
+        # Create VDI Image
+        log.header("Criando Imagem VDI")
+        
+        # Primeiro garantir build (se o usuário escolher isso no menu, provavelmente quer o mais recente)
+        # Por simplicidade aqui, vamos assumir que ele já deu build ou fazer um build rápido se o kernel não existir
+        if not paths.kernel_binary().exists():
+            log.info("Kernel não encontrado, fazendo build primeiro...")
+            builder = CargoBuilder(paths.project_root)
+            await builder.build("Kernel", paths.forge, profile="release")
+            # Adicionar outros se necessário... mas o build 1 é o completo.
+            
+        image_builder = ImageBuilder(paths, config)
+        await image_builder.build_vdi(profile="release")
         
     elif choice == "5":
         # Run QEMU

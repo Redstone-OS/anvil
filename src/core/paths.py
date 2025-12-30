@@ -50,6 +50,11 @@ class PathResolver:
         return self.dist / "qemu"
     
     @property
+    def dist_img(self) -> Path:
+        """Caminho para imagens de disco."""
+        return self.dist / "img"
+
+    @property
     def assets(self) -> Path:
         """Caminho de assets do Anvil."""
         return self.anvil_root / "src" / "assets"
@@ -141,6 +146,7 @@ class PathResolver:
         dirs = [
             self.dist,
             self.dist_qemu,
+            self.dist_img,
             self.dist_qemu / "EFI" / "BOOT",
             self.dist_qemu / "boot",
             self.initramfs,
