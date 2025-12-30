@@ -119,7 +119,7 @@ async def handle_choice(choice: str) -> bool:
         
         # Services
         for svc in config.components.services:
-            svc_path = paths.services / svc.name
+            svc_path = paths.project_root / svc.path  # Usa path do config (suporta firefly/compositor)
             await builder.build(svc.name, svc_path, target=svc.target, profile="release")
         
         # Dist
@@ -149,7 +149,7 @@ async def handle_choice(choice: str) -> bool:
         log.header("Build Services")
         builder = CargoBuilder(paths.project_root)
         for svc in config.components.services:
-            svc_path = paths.services / svc.name
+            svc_path = paths.project_root / svc.path  # Usa path do config
             await builder.build(svc.name, svc_path, target=svc.target, profile="release")
         
     elif choice == "V":

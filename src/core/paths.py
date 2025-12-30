@@ -120,8 +120,12 @@ class PathResolver:
         return self.ignite / "target" / "x86_64-unknown-uefi" / profile / "ignite.efi"
     
     def service_binary(self, name: str, profile: str = "release") -> Path:
-        """Caminho do binário de um serviço."""
+        """Caminho do binário de um serviço (path padrão em services/)."""
         return self.services / name / "target" / "x86_64-unknown-none" / profile / name
+    
+    def service_binary_from_config(self, path: str, name: str, profile: str = "release") -> Path:
+        """Caminho do binário de um serviço com path customizado."""
+        return self.project_root / path / "target" / "x86_64-unknown-none" / profile / name
     
     # ========================================================================
     # Logs

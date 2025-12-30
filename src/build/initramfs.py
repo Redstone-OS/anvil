@@ -160,7 +160,8 @@ depends = []
         for svc in self.config.components.services:
             if svc.name == "init":
                 continue
-            svc_path = self.paths.service_binary(svc.name, profile)
+            # Usar path do config (suporta paths customizados como firefly/compositor)
+            svc_path = self.paths.service_binary_from_config(svc.path, svc.name, profile)
             self.add_service(svc.name, svc_path)
         
         # Criar manifesto

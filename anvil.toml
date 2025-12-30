@@ -24,6 +24,11 @@ path = "services/init"
 target = "x86_64-unknown-none"
 
 [[components.services]]
+name = "firefly"
+path = "firefly/compositor"
+target = "x86_64-unknown-none"
+
+[[components.services]]
 name = "console"
 path = "services/console"
 target = "x86_64-unknown-none"
