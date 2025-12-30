@@ -33,6 +33,11 @@ name = "shell"
 path = "firefly/shell"
 target = "x86_64-unknown-none"
 
+[[components.services]]
+name = "input"
+path = "services/input"
+target = "x86_64-unknown-none"
+
 # ============================================================================
 # QEMU
 # ============================================================================
