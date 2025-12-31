@@ -38,6 +38,11 @@ name = "input"
 path = "services/input"
 target = "x86_64-unknown-none"
 
+[[components.services]]
+name = "terminal"
+path = "firefly/apps/terminal"
+target = "x86_64-unknown-none"
+
 # ============================================================================
 # QEMU
 # ============================================================================

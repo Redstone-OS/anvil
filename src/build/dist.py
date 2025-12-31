@@ -20,9 +20,11 @@ class DistBuilder:
     
     def clean(self) -> None:
         """Limpa diretório de distribuição."""
-        if self.paths.dist_qemu.exists():
-            shutil.rmtree(self.paths.dist_qemu)
-        log.step("dist/qemu limpo")
+        # Se habilitado, pode apagar tudo. Mas por padrão agora apenas garante a existência.
+        # if self.paths.dist_qemu.exists():
+        #     shutil.rmtree(self.paths.dist_qemu)
+        self.paths.dist_qemu.mkdir(parents=True, exist_ok=True)
+        log.step("dist/qemu preservado (clean desativado)")
     
     def prepare_structure(self) -> None:
         """Cria estrutura UEFI."""
