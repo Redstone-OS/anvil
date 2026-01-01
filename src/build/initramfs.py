@@ -46,9 +46,9 @@ class InitramfsBuilder:
         """Cria estrutura de diretórios do initramfs."""
         log.info("📂 Preparando estrutura InitRAMFS...")
         
-        # Limpar se existir
-        if self.paths.initramfs.exists():
-            shutil.rmtree(self.paths.initramfs)
+        # Limpar se existir (User pediu para não apagar)
+        # if self.paths.initramfs.exists():
+        #     shutil.rmtree(self.paths.initramfs)
         
         # Criar estrutura
         for dir_path in self.DIRECTORY_STRUCTURE:
@@ -151,14 +151,15 @@ depends = []
         # Preparar estrutura
         self.prepare_structure()
         
-        # Adicionar init (obrigatório)
-        init_path = self.paths.service_binary("init", profile)
-        if not self.add_service("init", init_path, is_core=True):
-            raise BuildError("Serviço init é obrigatório", "initramfs")
+        # Adicionar supervisor (PID 1)
+        supervisor_path = self.paths.service_binary("supervisor", profile)
+        # is_core=False -> /system/services/supervisor (conforme user request)
+        if not self.add_service("supervisor", supervisor_path, is_core=False):
+            raise BuildError("Serviço supervisor é obrigatório", "initramfs")
         
         # Adicionar outros serviços
         for svc in self.config.components.services:
-            if svc.name == "init":
+            if svc.name == "supervisor":
                 continue
             # Usar path do config (suporta paths customizados como firefly/compositor)
             svc_path = self.paths.service_binary_from_config(svc.path, svc.name, profile)

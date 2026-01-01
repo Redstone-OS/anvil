@@ -18,6 +18,7 @@ def colorize_line(line: str) -> str:
     line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
     line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
     line = re.sub(r'\[ERROR\]', '[red][ERROR][/red]', line)
+    line = re.sub(r'\[Supervisor\]', '[orange1][Supervisor][/orange1]', line)
     
     return line
 

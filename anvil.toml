@@ -19,8 +19,8 @@ target = "x86_64-unknown-uefi"
 default_profile = "release"
 
 [[components.services]]
-name = "init"
-path = "services/init"
+name = "supervisor"
+path = "services/supervisor"
 target = "x86_64-unknown-none"
 
 [[components.services]]
