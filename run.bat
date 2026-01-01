@@ -2,11 +2,6 @@
 cd /d "%~dp0"
 title Anvil 4.0 - RedstoneOS
 
-echo ========================================
-echo    Anvil - RedstoneOS Build Tool
-echo ========================================
-echo.
-
 REM Adicionar src ao PYTHONPATH
 set PYTHONPATH=%~dp0src
 
