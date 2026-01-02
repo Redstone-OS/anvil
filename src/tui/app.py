@@ -139,6 +139,32 @@ class AnvilApp(App):
         self.paths = Paths(self.config.project_root)
         self.log_panel = None
         self._qemu_running = False  # Guard to prevent multiple QEMU instances
+        self.is_busy = False        # Global busy lock for UI actions
+
+    async def run_exclusive(self, coro_func):
+        """Run a coroutine exclusively, preventing other actions while it runs."""
+        if self.is_busy:
+            self.log_warning("Uma operação já está em andamento. Aguarde...")
+            return
+
+        self.is_busy = True
+        
+        # Remove focus from buttons to prevent accidental 'Enter' repeats
+        # Focusing the log widget allows scrolling while busy
+        try:
+            if self.log_panel and hasattr(self.log_panel, 'log_widget'):
+                self.set_focus(self.log_panel.log_widget)
+        except Exception:
+            pass
+
+        try:
+            await coro_func()
+        except Exception as e:
+            self.log_error(f"Erro na operação: {e}")
+        finally:
+            # Add a small buffer time to swallow any pending inputs
+            await asyncio.sleep(0.5)
+            self.is_busy = False
 
     def compose(self) -> ComposeResult:
         """Create the layout."""
@@ -199,9 +225,6 @@ class AnvilApp(App):
     @on(Button.Pressed, "#run_qemu")
     async def on_run_qemu(self): await self._run_qemu()
     
-    @on(Button.Pressed, "#run_qemu_gdb")
-    async def on_run_qemu_gdb(self): await self._run_qemu_gdb()
-    
     @on(Button.Pressed, "#listen_serial")
     async def on_listen_serial(self): await self._listen_serial()
     
@@ -213,12 +236,6 @@ class AnvilApp(App):
     
     @on(Button.Pressed, "#statistics")
     async def on_statistics(self): await self._statistics()
-    
-    @on(Button.Pressed, "#clear_logs")
-    async def on_clear_logs(self):
-        if self.log_panel:
-            self.log_panel.clear_logs()
-            self.log_success("Logs limpos.")
     
     @on(Button.Pressed, "#clean")
     async def on_clean(self): await self._clean()
@@ -233,24 +250,24 @@ class AnvilApp(App):
     async def on_quit_btn(self): self.exit()
 
     # --- Keyboard Actions ---
-    async def action_build_release(self): await self._build_release()
-    async def action_build_kernel(self): await self._build_kernel()
-    async def action_build_bootloader(self): await self._build_bootloader()
-    async def action_build_services(self): await self._build_services()
-    async def action_build_apps(self): await self._build_apps()
-    async def action_create_vdi(self): await self._create_vdi()
-    async def action_run_qemu(self): await self._run_qemu()
-    async def action_run_qemu_gdb(self): await self._run_qemu_gdb()
-    async def action_listen_serial(self): await self._listen_serial()
-    async def action_analyze_log(self): await self._analyze_log()
-    async def action_inspect_kernel(self): await self._inspect_kernel()
-    async def action_statistics(self): await self._statistics()
+    async def action_build_release(self): await self.run_exclusive(self._build_release)
+    async def action_build_kernel(self): await self.run_exclusive(self._build_kernel)
+    async def action_build_bootloader(self): await self.run_exclusive(self._build_bootloader)
+    async def action_build_services(self): await self.run_exclusive(self._build_services)
+    async def action_build_apps(self): await self.run_exclusive(self._build_apps)
+    async def action_create_vdi(self): await self.run_exclusive(self._create_vdi)
+    async def action_run_qemu(self): await self.run_exclusive(self._run_qemu)
+    async def action_run_qemu_gdb(self): await self.run_exclusive(self._run_qemu_gdb)
+    async def action_listen_serial(self): await self.run_exclusive(self._listen_serial)
+    async def action_analyze_log(self): await self.run_exclusive(self._analyze_log)
+    async def action_inspect_kernel(self): await self.run_exclusive(self._inspect_kernel)
+    async def action_statistics(self): await self.run_exclusive(self._statistics)
     async def action_clear_logs(self):
         if self.log_panel:
             self.log_panel.clear_logs()
             self.log_success("Logs cleared.")
-    async def action_clean(self): await self._clean()
-    async def action_environment(self): await self._environment()
+    async def action_clean(self): await self.run_exclusive(self._clean)
+    async def action_environment(self): await self.run_exclusive(self._environment)
 
     async def action_toggle_menu(self):
         """Toggle the menu panel visibility."""
@@ -496,17 +513,6 @@ class AnvilApp(App):
             # 3. Post-run cooldown: keep flag True for a second to absorb buffered inputs
             await asyncio.sleep(1.0)
             self._qemu_running = False
-
-    async def _run_qemu_gdb(self):
-        from runner.monitor import QemuMonitor
-        from runner.qemu import QemuConfig
-        
-        self.log_panel.clear_logs()
-        self.log_header("Iniciando QEMU com GDB")
-        self.log_info("Conecte o depurador em localhost:1234")
-        
-        qemu_config = QemuConfig(memory=self.config.qemu.memory, enable_gdb=True)
-        await QemuMonitor(self.paths, self.config, stop_on_exception=False).run_monitored(qemu_config)
 
     async def _listen_serial(self):
         self.log_panel.clear_logs()
