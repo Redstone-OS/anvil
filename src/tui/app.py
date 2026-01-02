@@ -246,6 +246,9 @@ class AnvilApp(App):
     @on(Button.Pressed, "#toggle_menu")
     async def on_toggle_menu_btn(self): await self.action_toggle_menu()
     
+    @on(Button.Pressed, "#copy_log")
+    async def on_copy_log(self): await self._copy_log()
+    
     @on(Button.Pressed, "#quit")
     async def on_quit_btn(self): self.exit()
 
@@ -658,6 +661,38 @@ class AnvilApp(App):
                 self.log_info(f"Removido: {name}")
         
         self.log_success("Limpeza concluída!")
+
+    async def _copy_log(self):
+        """Copy log content to clipboard using Windows clip command."""
+        import subprocess
+        
+        if not self.log_panel:
+            self.log_warning("Log vazio.")
+            return
+        
+        try:
+            # Get plain text from log panel
+            text = self.log_panel.get_plain_text()
+            
+            if not text:
+                self.log_warning("Log vazio.")
+                return
+            
+            # Use Windows clip command
+            process = subprocess.Popen(
+                ['clip'],
+                stdin=subprocess.PIPE,
+                shell=True
+            )
+            process.communicate(text.encode('utf-8'))
+            
+            if process.returncode == 0:
+                self.log_success(f"📋 Log copiado! ({len(text)} caracteres)")
+            else:
+                self.log_error("Falha ao copiar para clipboard.")
+                
+        except Exception as e:
+            self.log_error(f"Erro ao copiar: {e}")
 
     async def _environment(self):
         import subprocess

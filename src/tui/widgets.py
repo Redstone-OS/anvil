@@ -2,7 +2,10 @@ from datetime import datetime
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static, RichLog, Button
+from textual.binding import Binding
+from textual.events import Key
 from runner.serial import SerialColorizer
+import re
 
 class MenuPanel(Static):
     """Sidebar menu panel."""
@@ -26,16 +29,80 @@ class MenuPanel(Static):
         yield Button("Limpar Build", id="clean", classes="menu-btn")
         yield Button("Ambiente", id="environment", classes="menu-btn")
         yield Button("Tela Cheia", id="toggle_menu", classes="menu-btn")
+        yield Button("Copiar Log", id="copy_log", classes="menu-btn")
         yield Button("Sair", id="quit", classes="menu-btn-quit")
 
 
 class LogPanel(Static):
-    """Log display panel."""
+    """Log display panel with copy support."""
+    
+    # Track if this panel has focus
+    is_focused: bool = False
+    
+    # Internal log storage (plain text)
+    _log_lines: list[str] = []
 
     def compose(self) -> ComposeResult:
         self.log_widget = RichLog(highlight=True, markup=True, auto_scroll=True, max_lines=10000)
         self.log_widget.can_focus = True
+        self._log_lines = []
         yield self.log_widget
+    
+    def on_focus(self, event) -> None:
+        """Track when panel gains focus."""
+        self.is_focused = True
+        self.add_class("focused")
+    
+    def on_blur(self, event) -> None:
+        """Track when panel loses focus."""
+        self.is_focused = False
+        self.remove_class("focused")
+    
+    def on_key(self, event: Key) -> None:
+        """Handle key events - Ctrl+C copies log when focused."""
+        if event.key == "ctrl+c" and self.is_focused:
+            self.copy_to_clipboard()
+            event.prevent_default()
+            event.stop()
+    
+    def copy_to_clipboard(self) -> None:
+        """Copy all log content to clipboard."""
+        try:
+            import pyperclip
+            
+            # Get plain text content
+            text = self.get_plain_text()
+            
+            if text:
+                pyperclip.copy(text)
+                # Show feedback
+                self.app.notify("📋 Log copiado para área de transferência!", severity="information")
+            else:
+                self.app.notify("⚠ Log vazio", severity="warning")
+                
+        except ImportError:
+            # pyperclip not available, try alternative
+            try:
+                import subprocess
+                text = self.get_plain_text()
+                # Windows clip command
+                process = subprocess.Popen(['clip'], stdin=subprocess.PIPE)
+                process.communicate(text.encode('utf-8'))
+                self.app.notify("📋 Log copiado!", severity="information")
+            except Exception as e:
+                self.app.notify(f"❌ Erro ao copiar: {e}", severity="error")
+        except Exception as e:
+            self.app.notify(f"❌ Erro ao copiar: {e}", severity="error")
+    
+    def get_plain_text(self) -> str:
+        """Get log content as plain text (strips Rich markup)."""
+        # Join stored plain text lines
+        return "\n".join(self._log_lines)
+    
+    def _strip_markup(self, text: str) -> str:
+        """Remove Rich markup tags from text."""
+        # Remove [tag] and [/tag] patterns
+        return re.sub(r'\[/?[^\]]+\]', '', text)
 
     def add_log(self, message: str, is_markup: bool = False):
         """Add a log line."""
@@ -46,15 +113,21 @@ class LogPanel(Static):
 
         if is_markup:
             content = message
+            # Store plain text version
+            self._log_lines.append(self._strip_markup(message))
         else:
             # Escape Rich markup
             content = message.replace("[", "\\[")
+            self._log_lines.append(message)
 
         self.log_widget.write(content)
 
     def add_raw(self, line: str):
         """Add raw line (with colorization)."""
         if hasattr(self, 'log_widget') and self.log_widget:
+            # Store original line (plain text)
+            self._log_lines.append(line)
+            
             # 1. Apply serial colorization if it contains typical log markers
             markers = ["[OK]", "[INFO]", "[TRACE]", "[DEBUG]", "[ERROR]", "[WARN]", "[FAIL]", 
                        "[Supervisor]", "[Compositor]", "[Shell]", "[Input]"]
@@ -98,3 +171,4 @@ class LogPanel(Static):
         """Clear all logs."""
         if hasattr(self, 'log_widget') and self.log_widget:
             self.log_widget.clear()
+        self._log_lines = []
