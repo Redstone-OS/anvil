@@ -11,6 +11,7 @@ class MenuPanel(Static):
         yield Static("[bold #ffa500]⚡ Redstone[/bold #ffa500][bold white]OS[/bold white]\n", classes="menu-title")
 
         yield Button("Release Total", id="build_release", classes="menu-btn")
+        yield Button("Release Limpo", id="build_clean_release", classes="menu-btn")
         yield Button("Release Otimizado", id="build_opt_release", classes="menu-btn")
         yield Button("Apenas Kernel", id="build_kernel", classes="menu-btn")
         yield Button("Bootloader", id="build_bootloader", classes="menu-btn")

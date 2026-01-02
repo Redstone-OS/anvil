@@ -31,6 +31,10 @@ class AnvilApp(App):
         background: #111111;
         border-right: solid #333333;
         padding: 1 1;
+        overflow-y: auto;
+        scrollbar-background: #111111;
+        scrollbar-color: #333333;
+        scrollbar-color-hover: #ffa500;
     }
 
     .menu-title {
@@ -170,6 +174,9 @@ class AnvilApp(App):
     # --- Button Click Handlers ---
     @on(Button.Pressed, "#build_release")
     async def on_build_release(self): await self._build_release()
+
+    @on(Button.Pressed, "#build_clean_release")
+    async def on_build_clean_release(self): await self._build_clean_release()
     
     @on(Button.Pressed, "#build_opt_release")
     async def on_build_opt_release(self): await self._build_opt_release()
@@ -333,6 +340,53 @@ class AnvilApp(App):
         await InitramfsBuilder(self.paths, self.config).build()
         
         self.log_success("Build concluída com sucesso!")
+
+    async def _build_clean_release(self):
+        import shutil
+        from build.dist import DistBuilder
+        from build.initramfs import InitramfsBuilder
+        
+        self.log_panel.clear_logs()
+        self.log_header("Build da Release Limpa (Kernel Otimizado)")
+        
+        # 1. Kernel (Custom Profile)
+        if not await self._run_cargo("Kernel", self.paths.forge, profile="clean-release"):
+            return
+            
+        # Hack: Copy clean-release binary to release location so DistBuilder picks it up
+        clean_bin = self.paths.kernel_binary("clean-release")
+        release_bin = self.paths.kernel_binary("release")
+        
+        if clean_bin.exists():
+            release_bin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(clean_bin, release_bin)
+            self.log_info(f"Binário 'clean-release' copiado para 'release'")
+        else:
+            self.log_error("Erro: Binário do kernel não encontrado.")
+            return
+        
+        # 2. Bootloader (Standard Release)
+        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi"):
+            return
+        
+        # 3. Services (Standard Release)
+        for svc in self.config.components.services:
+            await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target)
+
+        # 4. Apps (Standard Release)
+        for app in self.config.components.apps:
+            await self._run_cargo(app.name, self.paths.root / app.path, target=app.target)
+        
+        # 5. Dist preparation (Standard Release)
+        self.log_info("Preparando distribuição...")
+        DistBuilder(self.paths, self.config).prepare()
+        self.log_success("dist/qemu pronta")
+        
+        # 6. Initramfs
+        self.log_info("Construindo initramfs...")
+        await InitramfsBuilder(self.paths, self.config).build()
+        
+        self.log_success("Build Limpa concluída com sucesso!")
 
     async def _build_opt_release(self):
         from build.dist import DistBuilder
