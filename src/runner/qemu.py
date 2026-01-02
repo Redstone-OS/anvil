@@ -14,7 +14,7 @@ from core.logger import Logger, get_logger
 @dataclass
 class QemuConfig:
     """QEMU execution configuration."""
-    memory: str = "512M"
+    memory: str = "4097M"
     serial: str = "stdio"
     monitor: str = "none"
     vga_memory: int = 16
@@ -28,11 +28,9 @@ class QemuRunner:
     """
     QEMU process manager.
     
-    Launches QEMU via WSL with:
-    - UEFI boot from dist/qemu
-    - Serial output via stdio
-    - Debug logging to file
-    - Optional GDB server
+    Launches QEMU via WSL with dual-disk setup simulating SSD partitions:
+    - Disk 0 (IDE): EFI partition with bootloader (for UEFI boot)
+    - Disk 1 (VirtIO): RFS partition with system files
     """
     
     def __init__(
@@ -50,15 +48,19 @@ class QemuRunner:
         """Build the QEMU command line for WSL."""
         cfg = qemu_config or QemuConfig()
         
-        # WSL paths
-        dist_path = Paths.to_wsl(self.paths.dist_qemu)
+        # WSL paths for each partition
+        efi_path = Paths.to_wsl(self.paths.dist_ssd_efi)
+        rfs_path = Paths.to_wsl(self.paths.dist_ssd_rfs)
         internal_log = Paths.to_wsl(self.paths.cpu_log)
         serial_log = Paths.to_wsl(self.paths.serial_log)
         
         parts = [
             "qemu-system-x86_64",
             f"-m {cfg.memory}",
-            f"-drive file=fat:rw:'{dist_path}',format=raw",
+            # Disk 0: EFI partition (IDE for reliable UEFI boot)
+            f"-drive file=fat:rw:'{efi_path}',format=raw",
+            # Disk 1: RFS partition (VirtIO for performance)
+            f"-drive file=fat:rw:'{rfs_path}',format=raw,if=virtio",
             "-bios /usr/share/qemu/OVMF.fd",
             f"-serial {cfg.serial}",
             f"-monitor {cfg.monitor}",
@@ -144,4 +146,3 @@ class QemuRunner:
                 return await self.process.wait()
         except asyncio.TimeoutError:
             return -1
-

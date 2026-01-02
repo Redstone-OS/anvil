@@ -91,8 +91,23 @@ class Paths:
     
     @property
     def dist_qemu(self) -> Path:
-        """QEMU-ready distribution."""
-        return self.dist / "qemu"
+        """QEMU-ready distribution (legacy alias for dist_ssd)."""
+        return self.dist_ssd
+    
+    @property
+    def dist_ssd(self) -> Path:
+        """SSD simulation directory."""
+        return self.dist / "ssd"
+    
+    @property
+    def dist_ssd_efi(self) -> Path:
+        """EFI partition (FAT32 with bootloader)."""
+        return self.dist_ssd / "EFI"
+    
+    @property
+    def dist_ssd_rfs(self) -> Path:
+        """RFS partition (system files)."""
+        return self.dist_ssd / "RFS"
     
     @property
     def dist_img(self) -> Path:
@@ -208,10 +223,11 @@ class Paths:
         """Create all required directories."""
         dirs = [
             self.dist,
-            self.dist_qemu,
+            self.dist_ssd,
+            self.dist_ssd_efi / "BOOT",
+            self.dist_ssd_rfs / "boot",
+            self.dist_ssd_rfs / "system" / "services",
             self.dist_img,
-            self.dist_qemu / "EFI" / "BOOT",
-            self.dist_qemu / "boot",
             self.initramfs,
             self.anvil_log_dir,
         ]

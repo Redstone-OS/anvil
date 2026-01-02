@@ -1,4 +1,4 @@
-"""Anvil Build - InitRAMFS creation."""
+"""Anvil Build - InitRAMFS creation and RFS services deployment."""
 
 from __future__ import annotations
 
@@ -24,34 +24,25 @@ class InitramfsEntry:
 
 class InitramfsBuilder:
     """
-    Builder for the kernel's InitRAMFS.
+    Builder for the kernel's InitRAMFS and RFS services.
     
-    Creates a TAR archive with the RedstoneOS userspace structure:
-    
+    InitRAMFS (boot/initfs) - Minimal bootstrap:
     /system/
-    ├── core/       - Core services (PID 1, etc.)
-    ├── services/   - User services (compositor, shell, etc.)
-    ├── drivers/    - Userspace drivers
-    └── manifests/  - Service configuration
+    └── core/
+        └── supervisor   # PID 1 only!
     
-    /runtime/
-    ├── ipc/        - IPC endpoints
-    └── logs/       - Runtime logs
-    
-    /state/
-    ├── system/     - System state
-    └── services/   - Per-service state
+    RFS (on disk) - Full system:
+    /system/
+    ├── services/       # User services (copied here)
+    │   ├── firefly
+    │   └── shell
+    └── manifests/
+        └── services.toml
     """
     
-    DIRECTORIES = [
+    # Minimal initfs structure (just for supervisor)
+    INITFS_DIRECTORIES = [
         "system/core",
-        "system/services",
-        "system/drivers",
-        "system/manifests",
-        "runtime/ipc",
-        "runtime/logs",
-        "state/system",
-        "state/services",
     ]
     
     def __init__(
@@ -66,62 +57,59 @@ class InitramfsBuilder:
         self.entries: list[InitramfsEntry] = []
     
     async def build(self, profile: str = "release") -> bool:
-        """Build the complete initramfs."""
-        self.log.header("Building InitRAMFS")
+        """Build the initramfs and deploy services to RFS."""
+        self.log.header("Building InitRAMFS + RFS Services")
         
-        self._create_structure()
+        # Clean staging directory
+        self._clean_staging()
         
-        # Add supervisor (PID 1)
+        # Create minimal initfs structure
+        self._create_initfs_structure()
+        
+        # Add ONLY supervisor to initfs
         supervisor_path = self.paths.service_binary("supervisor", profile)
-        if not self._add_service("supervisor", supervisor_path, core=False):
+        if not self._add_to_initfs("supervisor", supervisor_path):
             raise BuildError("Supervisor service is required", "initramfs")
         
-        # Add all other services from config
-        for svc in self.config.components.services:
-            if svc.name == "supervisor":
-                continue
-            
-            svc_path = self.paths.service_binary(
-                svc.name,
-                profile,
-                base_path=self.paths.root / svc.path,
-            )
-            self._add_service(svc.name, svc_path, core=svc.core)
-        
-        # Create manifest
-        self._create_manifest()
-        
-        # Create TAR via WSL
-        output = self.paths.dist_qemu / "boot" / "initfs"
+        # Create initfs TAR
+        output = self.paths.dist_ssd_rfs / "boot" / "initfs"
         output.parent.mkdir(parents=True, exist_ok=True)
-        
         tar_size = await self._create_tar(output)
-        return tar_size is not None
-    
-    def _create_structure(self) -> None:
-        """Create directory structure."""
-        self.log.info("📂 Creating initramfs structure...")
         
-        for dir_path in self.DIRECTORIES:
+        if tar_size is None:
+            return False
+        
+        # Deploy other services directly to RFS/system/services/
+        await self._deploy_rfs_services(profile)
+        
+        # Create manifest on RFS
+        self._create_manifest_on_rfs()
+        
+        return True
+    
+    def _clean_staging(self) -> None:
+        """Clean the initramfs staging directory."""
+        if self.paths.initramfs.exists():
+            shutil.rmtree(self.paths.initramfs)
+        self.paths.initramfs.mkdir(parents=True, exist_ok=True)
+    
+    def _create_initfs_structure(self) -> None:
+        """Create minimal initfs directory structure (supervisor only)."""
+        self.log.info("📂 Creating minimal initfs structure...")
+        
+        for dir_path in self.INITFS_DIRECTORIES:
             full_path = self.paths.initramfs / dir_path
             full_path.mkdir(parents=True, exist_ok=True)
         
-        self.log.step("Structure: /system, /runtime, /state created")
+        self.log.step("Structure: /system/core (supervisor only)")
     
-    def _add_service(
-        self,
-        name: str,
-        source: Path,
-        core: bool = False,
-    ) -> bool:
-        """Add a service binary to the initramfs."""
+    def _add_to_initfs(self, name: str, source: Path) -> bool:
+        """Add a binary to the initfs (only for supervisor)."""
         if not source.exists():
-            self.log.warning(f"Service '{name}' not found: {source}")
+            self.log.error(f"Service '{name}' not found: {source}")
             return False
         
-        dest_dir = "system/core" if core else "system/services"
-        dest = f"{dest_dir}/{name}"
-        
+        dest = f"system/core/{name}"
         dest_path = self.paths.initramfs / dest
         shutil.copy2(source, dest_path)
         
@@ -131,28 +119,73 @@ class InitramfsBuilder:
             size=source.stat().st_size,
         ))
         
-        self.log.step(f"/{dest} ({source.stat().st_size:,} bytes)")
+        self.log.step(f"initfs: /{dest} ({source.stat().st_size:,} bytes)")
         return True
     
-    def _create_manifest(self) -> None:
-        """Create services manifest file."""
-        manifest_path = self.paths.initramfs / "system/manifests/services.toml"
+    async def _deploy_rfs_services(self, profile: str) -> None:
+        """Deploy all non-supervisor services to RFS/system/services/."""
+        self.log.info("📦 Deploying services to RFS...")
         
-        content = """# RedstoneOS Services Manifest
-# /system/manifests/services.toml
-
-[init]
-path = "/system/core/init"
-restart = "never"
-depends = []
-"""
+        # Create RFS services directory
+        services_dir = self.paths.dist_ssd_rfs / "system" / "services"
+        services_dir.mkdir(parents=True, exist_ok=True)
         
-        manifest_path.write_text(content, encoding="utf-8")
-        self.log.step("/system/manifests/services.toml created")
+        deployed = 0
+        for svc in self.config.components.services:
+            # Skip supervisor (it's in initfs)
+            if svc.name == "supervisor":
+                continue
+            
+            svc_path = self.paths.service_binary(
+                svc.name,
+                profile,
+                base_path=self.paths.root / svc.path,
+            )
+            
+            if not svc_path.exists():
+                self.log.warning(f"Service '{svc.name}' not found: {svc_path}")
+                continue
+            
+            dest = services_dir / svc.name
+            shutil.copy2(svc_path, dest)
+            deployed += 1
+            
+            self.log.step(f"RFS: /system/services/{svc.name} ({svc_path.stat().st_size:,} bytes)")
+        
+        self.log.success(f"Deployed {deployed} services to RFS")
+    
+    def _create_manifest_on_rfs(self) -> None:
+        """Create services manifest on RFS."""
+        manifests_dir = self.paths.dist_ssd_rfs / "system" / "manifests"
+        manifests_dir.mkdir(parents=True, exist_ok=True)
+        
+        manifest_path = manifests_dir / "services.toml"
+        
+        # Build manifest from config
+        lines = [
+            "# RedstoneOS Services Manifest",
+            "# /system/manifests/services.toml",
+            "",
+        ]
+        
+        for svc in self.config.components.services:
+            if svc.name == "supervisor":
+                continue
+            
+            lines.extend([
+                f"[[service]]",
+                f'name = "{svc.name}"',
+                f'path = "/system/services/{svc.name}"',
+                f'restart = "always"',
+                "",
+            ])
+        
+        manifest_path.write_text("\n".join(lines), encoding="utf-8")
+        self.log.step("RFS: /system/manifests/services.toml created")
     
     async def _create_tar(self, output: Path) -> Optional[int]:
         """Create TAR archive via WSL."""
-        self.log.info("📦 Creating initfs archive...")
+        self.log.info("📦 Creating initfs archive (supervisor only)...")
         
         wsl_initramfs = Paths.to_wsl(self.paths.initramfs)
         wsl_output = Paths.to_wsl(output)
@@ -173,10 +206,9 @@ depends = []
                 return None
             
             size = output.stat().st_size
-            self.log.success(f"initfs created ({size / 1024:.2f} KB)")
+            self.log.success(f"initfs created ({size / 1024:.2f} KB) - supervisor only")
             return size
         
         except FileNotFoundError:
             self.log.error("WSL not available")
             return None
-

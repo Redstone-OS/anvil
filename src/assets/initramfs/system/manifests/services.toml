@@ -1,7 +1,0 @@
-# RedstoneOS Services Manifest
-# /system/manifests/services.toml
-
-[init]
-path = "/system/core/init"
-restart = "never"
-depends = []
