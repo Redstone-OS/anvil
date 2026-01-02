@@ -78,6 +78,9 @@ class InitramfsBuilder:
         # Deploy other services to dist/qemu/system/services/
         await self._deploy_services(profile)
         
+        # Deploy apps to dist/qemu/apps/system/
+        await self._deploy_apps(profile)
+        
         # Create manifest
         self._create_manifest()
         
@@ -148,6 +151,33 @@ class InitramfsBuilder:
             self.log.step(f"/system/services/{svc.name} ({svc_path.stat().st_size:,} bytes)")
         
         self.log.success(f"Deployed {deployed} services")
+    
+    async def _deploy_apps(self, profile: str) -> None:
+        """Deploy all apps to dist/qemu/apps/system/."""
+        self.log.info("📦 Deploying apps...")
+        
+        apps_dir = self.paths.dist_qemu / "apps" / "system"
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        
+        deployed = 0
+        for app in self.config.components.apps:
+            app_path = self.paths.service_binary(
+                app.name,
+                profile,
+                base_path=self.paths.root / app.path,
+            )
+            
+            if not app_path.exists():
+                self.log.warning(f"App '{app.name}' not found: {app_path}")
+                continue
+            
+            dest = apps_dir / app.name
+            shutil.copy2(app_path, dest)
+            deployed += 1
+            
+            self.log.step(f"/apps/system/{app.name} ({app_path.stat().st_size:,} bytes)")
+        
+        self.log.success(f"Deployed {deployed} apps")
     
     def _create_manifest(self) -> None:
         """Create services manifest."""
