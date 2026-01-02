@@ -166,6 +166,10 @@ class AnvilApp(App):
             self._is_busy = True
             self._last_action_time = time.time()
             
+            # Clear previous logs before starting a new action
+            if self.log_panel:
+                self.log_panel.clear_logs()
+            
             try:
                 if self.log_panel and hasattr(self.log_panel, 'log_widget'):
                     self.set_focus(self.log_panel.log_widget)
@@ -353,7 +357,6 @@ class AnvilApp(App):
     async def _run_qemu(self, gdb=False):
         from runner.monitor import QemuMonitor
         from runner.qemu import QemuConfig
-        self.log_panel.clear_logs()
         self.log_header("QEMU Start")
         try:
             cfg = QemuConfig(memory=self.config.qemu.memory, debug_flags=self.config.qemu.logging.flags, enable_gdb=gdb)
