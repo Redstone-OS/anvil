@@ -1,3 +1,27 @@
+# Python
+/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
 __pycache__
-/__pycache__
-__pycache__/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Ferramentas
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Logs gerados por scripts Python
+*.log
+
+# Arquivos temporários
+*.tmp
+*.swp
+src/analysis/__pycache__/*
+src/assets/initramfs/system/core/*

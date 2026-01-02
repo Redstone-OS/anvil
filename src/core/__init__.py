@@ -1,20 +1,28 @@
-"""
-Anvil Core - Módulo central com configuração, logging e utilitários
-"""
+"""Anvil Core - Configuration, logging, and shared utilities."""
 
-from core.config import AnvilConfig, load_config
-from core.logger import console, log
-from core.paths import PathResolver
-from core.exceptions import AnvilError, BuildError, RunError, AnalysisError
+from core.config import Config, load_config
+from core.context import Context
+from core.logger import Logger, get_logger
+from core.paths import Paths
+from core.errors import (
+    AnvilError,
+    BuildError,
+    RunError,
+    AnalysisError,
+    ConfigError,
+)
 
 __all__ = [
-    "AnvilConfig",
-    "load_config", 
-    "console",
-    "log",
-    "PathResolver",
+    "Config",
+    "load_config",
+    "Context",
+    "Logger",
+    "get_logger",
+    "Paths",
     "AnvilError",
     "BuildError",
     "RunError",
     "AnalysisError",
+    "ConfigError",
 ]
+

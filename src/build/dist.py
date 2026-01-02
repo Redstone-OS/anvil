@@ -1,109 +1,140 @@
-"""
-Anvil Build - Preparação do diretório de distribuição
-"""
+"""Anvil Build - Distribution directory preparation."""
+
+from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Optional
 
-from core.config import AnvilConfig
-from core.logger import log
-from core.paths import PathResolver
-from core.exceptions import BuildError
+from core.config import Config
+from core.paths import Paths
+from core.errors import BuildError
+from core.logger import Logger, get_logger
 
 
 class DistBuilder:
-    """Prepara o diretório dist/qemu para execução."""
+    """
+    Prepares the dist/qemu directory for QEMU execution.
     
-    def __init__(self, paths: PathResolver, config: AnvilConfig):
+    Creates UEFI boot structure:
+    dist/qemu/
+    ├── EFI/BOOT/
+    │   └── BOOTX64.EFI    (bootloader)
+    ├── boot/
+    │   ├── kernel         (kernel binary)
+    │   └── initfs         (initramfs tar)
+    └── ignite.cfg         (bootloader config)
+    """
+    
+    def __init__(
+        self,
+        paths: Paths,
+        config: Config,
+        log: Optional[Logger] = None,
+    ):
         self.paths = paths
         self.config = config
+        self.log = log or get_logger()
     
-    def clean(self) -> None:
-        """Limpa diretório de distribuição."""
-        # Se habilitado, pode apagar tudo. Mas por padrão agora apenas garante a existência.
-        # if self.paths.dist_qemu.exists():
-        #     shutil.rmtree(self.paths.dist_qemu)
+    def prepare(self, profile: str = "release") -> bool:
+        """
+        Complete distribution preparation.
+        
+        Returns:
+            True if successful
+        
+        Raises:
+            BuildError: If required artifacts are missing
+        """
+        self.log.header("Preparing Distribution")
+        
+        self._create_structure()
+        
+        if not self._copy_bootloader(profile):
+            raise BuildError("Bootloader is required", "dist")
+        
+        if not self._copy_kernel(profile):
+            raise BuildError("Kernel is required", "dist")
+        
+        self._copy_assets()
+        
+        self.log.success(f"dist/qemu ready: {self.paths.dist_qemu}")
+        return True
+    
+    def _create_structure(self) -> None:
+        """Create UEFI directory structure."""
+        self.log.info("📦 Creating distribution structure...")
+        
         self.paths.dist_qemu.mkdir(parents=True, exist_ok=True)
-        log.step("dist/qemu preservado (clean desativado)")
+        (self.paths.dist_qemu / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
+        (self.paths.dist_qemu / "boot").mkdir(parents=True, exist_ok=True)
+        
+        self.log.step("Structure: EFI/BOOT, boot created")
     
-    def prepare_structure(self) -> None:
-        """Cria estrutura UEFI."""
-        log.info("📦 Preparando dist/qemu...")
-        
-        # Estrutura UEFI
-        efi_boot = self.paths.dist_qemu / "EFI" / "BOOT"
-        boot = self.paths.dist_qemu / "boot"
-        
-        efi_boot.mkdir(parents=True, exist_ok=True)
-        boot.mkdir(parents=True, exist_ok=True)
-        
-        log.step("Estrutura EFI/BOOT e boot criada")
-    
-    def copy_bootloader(self, profile: str = "release") -> bool:
-        """Copia bootloader para dist."""
+    def _copy_bootloader(self, profile: str) -> bool:
+        """Copy bootloader to EFI/BOOT/BOOTX64.EFI."""
         source = self.paths.bootloader_binary(profile)
         dest = self.paths.dist_qemu / "EFI" / "BOOT" / "BOOTX64.EFI"
         
         if not source.exists():
-            log.error(f"Bootloader não encontrado: {source}")
+            self.log.error(f"Bootloader not found: {source}")
             return False
         
         shutil.copy2(source, dest)
-        log.step(f"Bootloader → EFI/BOOT/BOOTX64.EFI ({source.stat().st_size:,} bytes)")
+        self.log.step(f"Bootloader → EFI/BOOT/BOOTX64.EFI ({source.stat().st_size:,} bytes)")
         return True
     
-    def copy_kernel(self, profile: str = "release") -> bool:
-        """Copia kernel para dist."""
+    def _copy_kernel(self, profile: str) -> bool:
+        """Copy kernel to boot/kernel."""
         source = self.paths.kernel_binary(profile)
         dest = self.paths.dist_qemu / "boot" / "kernel"
         
         if not source.exists():
-            log.error(f"Kernel não encontrado: {source}")
+            self.log.error(f"Kernel not found: {source}")
             return False
         
         shutil.copy2(source, dest)
-        log.step(f"Kernel → boot/kernel ({source.stat().st_size:,} bytes)")
+        self.log.step(f"Kernel → boot/kernel ({source.stat().st_size:,} bytes)")
         return True
     
-    def copy_assets(self) -> None:
-        """Copia assets necessários."""
-        # UEFI Shell (opcional)
+    def _copy_assets(self) -> None:
+        """Copy additional boot assets and create config."""
+        # UEFI Shell (optional)
         shell_source = self.paths.assets / "shellx64.efi"
         if shell_source.exists():
-            shell_dest = self.paths.dist_qemu / "EFI" / "BOOT" / "shellx64.efi"
-            shutil.copy2(shell_source, shell_dest)
-            log.step("UEFI Shell copiado")
+            dest = self.paths.dist_qemu / "EFI" / "BOOT" / "shellx64.efi"
+            shutil.copy2(shell_source, dest)
+            self.log.step("UEFI Shell copied")
         
-        # Config do bootloader
-        config_source = self.paths.assets / "ignite.cfg"
-        if config_source.exists():
-            config_dest = self.paths.dist_qemu / "ignite.cfg"
-            shutil.copy2(config_source, config_dest)
-            log.step("ignite.cfg copiado")
+        # Create ignite.cfg (bootloader config)
+        self._create_ignite_cfg()
     
-    def prepare(self, profile: str = "release") -> bool:
-        """
-        Processo completo de preparação do dist.
-        
-        Returns:
-            True se sucesso, False se algum artefato obrigatório falhou
-        """
-        log.header("Preparando Distribuição")
-        
-        # Limpar e criar estrutura
-        self.clean()
-        self.prepare_structure()
-        
-        # Copiar bootloader (obrigatório)
-        if not self.copy_bootloader(profile):
-            raise BuildError("Bootloader é obrigatório", "dist")
-        
-        # Copiar kernel (obrigatório)
-        if not self.copy_kernel(profile):
-            raise BuildError("Kernel é obrigatório", "dist")
-        
-        # Assets
-        self.copy_assets()
-        
-        log.success(f"dist/qemu pronto: {self.paths.dist_qemu}")
-        return True
+    def _create_ignite_cfg(self) -> None:
+        """Create the bootloader configuration file."""
+        cfg_content = """timeout: 10
+default_entry: 1
+serial: true
+quiet: false
+
+# Default Entry
+/Redstone OS
+    protocol: redstone
+    kernel_path: boot():/boot/kernel
+    cmdline: verbose
+    module_path: boot():/boot/initfs
+
+# Recovery Entry
+/UEFI Shell (Recovery)
+    protocol: chainload
+    kernel_path: boot():/EFI/BOOT/shellx64.efi
+"""
+        dest = self.paths.dist_qemu / "ignite.cfg"
+        dest.write_text(cfg_content, encoding="utf-8")
+        self.log.step("ignite.cfg created")
+    
+    def clean(self) -> None:
+        """Clean dist directory."""
+        if self.paths.dist.exists():
+            shutil.rmtree(self.paths.dist)
+            self.log.step("Cleaned dist/")
+

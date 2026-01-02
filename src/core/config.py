@@ -1,26 +1,28 @@
-"""
-Anvil Core - Configuração centralizada
-"""
+"""Anvil Core - Configuration loading and validation."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
 import toml
 
-from core.exceptions import ConfigError
+from core.errors import ConfigError
 
 
 @dataclass
 class ServiceConfig:
-    """Configuração de um serviço."""
+    """Service component configuration."""
     name: str
     path: str
     target: str = "x86_64-unknown-none"
+    core: bool = False  # Is it a core service (/system/core vs /system/services)
 
 
 @dataclass
 class KernelConfig:
-    """Configuração do kernel."""
+    """Kernel configuration."""
     path: str = "forge"
     target: str = "x86_64-redstone"
     default_profile: str = "release"
@@ -28,15 +30,15 @@ class KernelConfig:
 
 @dataclass
 class BootloaderConfig:
-    """Configuração do bootloader."""
+    """Bootloader configuration."""
     path: str = "ignite"
     target: str = "x86_64-unknown-uefi"
     default_profile: str = "release"
 
 
 @dataclass
-class QemuLoggingConfig:
-    """Configuração de logging do QEMU."""
+class QemuLogging:
+    """QEMU debug logging configuration."""
     flags: list[str] = field(default_factory=lambda: [
         "cpu_reset", "int", "mmu", "guest_errors", "unimp"
     ])
@@ -46,18 +48,19 @@ class QemuLoggingConfig:
 
 @dataclass
 class QemuConfig:
-    """Configuração do QEMU."""
+    """QEMU execution configuration."""
     memory: str = "512M"
+    vga_memory: int = 16
     ovmf: str = "assets/OVMF.fd"
-    extra_args: list[str] = field(default_factory=list)
-    logging: QemuLoggingConfig = field(default_factory=QemuLoggingConfig)
+    extra_args: list[str] = field(default_factory=lambda: ["-no-reboot", "-no-shutdown"])
+    logging: QemuLogging = field(default_factory=QemuLogging)
 
 
 @dataclass
-class PatternConfig:
-    """Configuração de um padrão de erro."""
+class AnalysisPattern:
+    """Error pattern for automatic diagnosis."""
     name: str
-    trigger: str
+    trigger: str  # Regex pattern
     diagnosis: str
     solution: str
     severity: str = "warning"
@@ -65,24 +68,36 @@ class PatternConfig:
 
 @dataclass
 class AnalysisConfig:
-    """Configuração de análise."""
+    """Analysis and diagnostics configuration."""
     context_lines: int = 100
     auto_inspect_binary: bool = True
     stop_on_exception: bool = True
-    patterns: list[PatternConfig] = field(default_factory=list)
+    patterns: list[AnalysisPattern] = field(default_factory=list)
 
+
+@dataclass
+class AppConfig:
+    """User-space application configuration."""
+    name: str
+    path: str
+    target: str = "x86_64-unknown-none"
 
 @dataclass
 class ComponentsConfig:
-    """Configuração de componentes."""
+    """All project components."""
     kernel: KernelConfig = field(default_factory=KernelConfig)
     bootloader: BootloaderConfig = field(default_factory=BootloaderConfig)
     services: list[ServiceConfig] = field(default_factory=list)
+    apps: list[AppConfig] = field(default_factory=list)
 
 
 @dataclass
-class AnvilConfig:
-    """Configuração principal do Anvil."""
+class Config:
+    """
+    Main Anvil configuration.
+    
+    Loaded from toml in the anvil/ directory.
+    """
     project_name: str = "RedstoneOS"
     project_root: Path = field(default_factory=Path)
     components: ComponentsConfig = field(default_factory=ComponentsConfig)
@@ -90,14 +105,14 @@ class AnvilConfig:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any], config_path: Path) -> "AnvilConfig":
-        """Cria configuração a partir de dicionário."""
-        # Resolver root relativo ao config
+    def from_dict(cls, data: dict[str, Any], config_path: Path) -> Config:
+        """Parse configuration from TOML dictionary."""
+        # Resolve project root relative to config file
         project_data = data.get("project", {})
         root_str = project_data.get("root", "..")
         project_root = (config_path.parent / root_str).resolve()
         
-        # Componentes
+        # Parse components
         comp_data = data.get("components", {})
         
         kernel = KernelConfig(**comp_data.get("kernel", {}))
@@ -106,23 +121,28 @@ class AnvilConfig:
         services = []
         for svc in comp_data.get("services", []):
             services.append(ServiceConfig(**svc))
+
+        apps = []
+        for app in comp_data.get("apps", []):
+            apps.append(AppConfig(**app))
         
         components = ComponentsConfig(
             kernel=kernel,
             bootloader=bootloader,
             services=services,
+            apps=apps,
         )
         
-        # QEMU
-        qemu_data = data.get("qemu", {})
+        # Parse QEMU config
+        qemu_data = data.get("qemu", {}).copy()
         logging_data = qemu_data.pop("logging", {})
-        qemu_logging = QemuLoggingConfig(**logging_data)
+        qemu_logging = QemuLogging(**logging_data)
         qemu = QemuConfig(**qemu_data, logging=qemu_logging)
         
-        # Análise
-        analysis_data = data.get("analysis", {})
+        # Parse analysis config
+        analysis_data = data.get("analysis", {}).copy()
         patterns_data = analysis_data.pop("patterns", [])
-        patterns = [PatternConfig(**p) for p in patterns_data]
+        patterns = [AnalysisPattern(**p) for p in patterns_data]
         analysis = AnalysisConfig(**analysis_data, patterns=patterns)
         
         return cls(
@@ -134,35 +154,55 @@ class AnvilConfig:
         )
 
 
-def load_config(config_path: Path | None = None) -> AnvilConfig:
+def find_config_file() -> Path:
     """
-    Carrega configuração do arquivo TOML.
+    Find anvil.toml configuration file.
     
-    Se não especificado, procura anvil.toml no diretório atual e pai.
+    Search order:
+    1. Current directory
+    2. Parent/anvil/ (if CWD is project root)
+    3. Script package location
+    """
+    search_paths = [
+        Path.cwd() / "anvil.toml",
+        Path.cwd().parent / "anvil" / "anvil.toml",
+        Path(__file__).parent.parent.parent.parent / "anvil.toml",
+    ]
+    
+    for path in search_paths:
+        if path.exists():
+            return path
+    
+    raise ConfigError(
+        "anvil.toml not found",
+        f"Searched in: {[str(p) for p in search_paths]}",
+    )
+
+
+def load_config(config_path: Optional[Path] = None) -> Config:
+    """
+    Load configuration from TOML file.
+    
+    Args:
+        config_path: Explicit path to anvil.toml (auto-detected if None)
+    
+    Returns:
+        Parsed Config object
+    
+    Raises:
+        ConfigError: If file not found or parsing fails
     """
     if config_path is None:
-        # Procurar anvil.toml
-        search_paths = [
-            Path.cwd() / "anvil.toml",
-            Path.cwd().parent / "anvil" / "anvil.toml",
-            Path(__file__).parent.parent.parent / "anvil.toml",
-        ]
-        
-        for path in search_paths:
-            if path.exists():
-                config_path = path
-                break
-        else:
-            raise ConfigError(
-                "Arquivo anvil.toml não encontrado. "
-                f"Procurado em: {[str(p) for p in search_paths]}"
-            )
+        config_path = find_config_file()
     
     if not config_path.exists():
-        raise ConfigError(f"Arquivo de configuração não encontrado: {config_path}")
+        raise ConfigError(f"Config file not found: {config_path}")
     
     try:
         data = toml.load(config_path)
-        return AnvilConfig.from_dict(data, config_path)
+        return Config.from_dict(data, config_path)
     except toml.TomlDecodeError as e:
-        raise ConfigError(f"Erro ao parsear {config_path}: {e}")
+        raise ConfigError(f"Invalid TOML in {config_path}", str(e))
+    except Exception as e:
+        raise ConfigError(f"Failed to load config: {config_path}", str(e))
+

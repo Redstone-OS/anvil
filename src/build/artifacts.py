@@ -1,20 +1,19 @@
-"""
-Anvil Build - Validação de artefatos gerados
-"""
+"""Anvil Build - Binary artifact validation."""
+
+from __future__ import annotations
 
 import hashlib
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from core.logger import log
-from core.exceptions import ValidationError
+from core.logger import Logger, get_logger
 
 
 class ArtifactType(Enum):
-    """Tipo de artefato."""
+    """Type of build artifact."""
     KERNEL = "kernel"
     BOOTLOADER = "bootloader"
     SERVICE = "service"
@@ -22,36 +21,39 @@ class ArtifactType(Enum):
 
 @dataclass
 class ValidationResult:
-    """Resultado da validação de um artefato."""
+    """Result of artifact validation."""
     valid: bool
     artifact_type: ArtifactType
     path: Path
     size: int = 0
     checksum: str = ""
-    issues: list[str] = None
-    
-    def __post_init__(self):
-        if self.issues is None:
-            self.issues = []
+    issues: list[str] = field(default_factory=list)
 
 
 class ArtifactValidator:
-    """Validador de artefatos de build."""
+    """
+    Validates compiled artifacts for correctness.
     
-    # ELF Magic
+    Checks:
+    - File existence and non-zero size
+    - Correct binary format (ELF64, PE64+)
+    - Entry point location (kernel in high-half)
+    - Integrity checksum
+    """
+    
     ELF_MAGIC = b"\x7fELF"
-    
-    # PE Magic (MZ header)
     PE_MAGIC = b"MZ"
+    
+    def __init__(self, log: Optional[Logger] = None):
+        self.log = log or get_logger()
     
     def validate_kernel(self, path: Path) -> ValidationResult:
         """
-        Valida binário do kernel.
+        Validate kernel binary.
         
-        Verifica:
-        - Arquivo existe e tem tamanho > 0
-        - É ELF64 válido
-        - Entry point está no high-half (kernel space)
+        Verifies:
+        - Is a valid ELF64 file
+        - Entry point is in kernel space (>= 0xFFFFFFFF80000000)
         """
         issues = []
         
@@ -60,7 +62,7 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.KERNEL,
                 path=path,
-                issues=[f"Arquivo não encontrado: {path}"],
+                issues=[f"File not found: {path}"],
             )
         
         size = path.stat().st_size
@@ -69,41 +71,39 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.KERNEL,
                 path=path,
-                size=0,
-                issues=["Arquivo vazio"],
+                issues=["File is empty"],
             )
         
-        # Verificar ELF
+        # Validate ELF format
         with open(path, "rb") as f:
             magic = f.read(4)
             if magic != self.ELF_MAGIC:
-                issues.append(f"Não é um arquivo ELF válido (magic: {magic.hex()})")
+                issues.append(f"Not a valid ELF file (magic: {magic.hex()})")
             else:
-                # ELF64 check
+                # Check ELF64
                 f.seek(4)
                 ei_class = f.read(1)
                 if ei_class != b"\x02":
-                    issues.append("Não é ELF64 (esperado para x86_64)")
+                    issues.append("Not ELF64 (expected for x86_64)")
                 
-                # Entry point check
-                f.seek(24)  # e_entry offset in ELF64
+                # Check entry point
+                f.seek(24)  # e_entry in ELF64
                 entry_bytes = f.read(8)
                 entry_point = struct.unpack("<Q", entry_bytes)[0]
                 
-                # Entry point deve estar em 0xFFFFFFFF80000000+ (high-half)
                 if entry_point < 0xFFFFFFFF80000000:
                     issues.append(
-                        f"Entry point {hex(entry_point)} não está no high-half "
-                        "(esperado >= 0xFFFFFFFF80000000)"
+                        f"Entry point 0x{entry_point:x} not in high-half "
+                        "(expected >= 0xFFFFFFFF80000000)"
                     )
         
         checksum = self._compute_checksum(path)
-        
         valid = len(issues) == 0
+        
         if valid:
-            log.success(f"Kernel válido ({size:,} bytes)")
+            self.log.success(f"Kernel valid ({size:,} bytes)")
         else:
-            log.error(f"Kernel inválido: {', '.join(issues)}")
+            self.log.error(f"Kernel invalid: {', '.join(issues)}")
         
         return ValidationResult(
             valid=valid,
@@ -115,9 +115,7 @@ class ArtifactValidator:
         )
     
     def validate_bootloader(self, path: Path) -> ValidationResult:
-        """
-        Valida binário do bootloader (UEFI PE64+).
-        """
+        """Validate UEFI bootloader (PE64+)."""
         issues = []
         
         if not path.exists():
@@ -125,7 +123,7 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.BOOTLOADER,
                 path=path,
-                issues=[f"Arquivo não encontrado: {path}"],
+                issues=[f"File not found: {path}"],
             )
         
         size = path.stat().st_size
@@ -134,37 +132,39 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.BOOTLOADER,
                 path=path,
-                size=0,
-                issues=["Arquivo vazio"],
+                issues=["File is empty"],
             )
         
-        # Verificar PE
+        # Validate PE format
         with open(path, "rb") as f:
             magic = f.read(2)
             if magic != self.PE_MAGIC:
-                issues.append(f"Não é um arquivo PE válido (magic: {magic.hex()})")
+                issues.append(f"Not a valid PE file (magic: {magic.hex()})")
             else:
-                # Verificar PE signature offset
+                # Get PE signature offset
                 f.seek(0x3C)
                 pe_offset = struct.unpack("<I", f.read(4))[0]
                 
+                # Check PE signature
                 f.seek(pe_offset)
                 pe_sig = f.read(4)
                 if pe_sig != b"PE\x00\x00":
-                    issues.append("Assinatura PE inválida")
+                    issues.append("Invalid PE signature")
                 else:
-                    # Verificar machine type (x86_64)
+                    # Check machine type (x86_64 = 0x8664)
                     machine = struct.unpack("<H", f.read(2))[0]
                     if machine != 0x8664:
-                        issues.append(f"Machine type incorreto: {hex(machine)} (esperado 0x8664)")
+                        issues.append(
+                            f"Wrong machine type: 0x{machine:x} (expected 0x8664)"
+                        )
         
         checksum = self._compute_checksum(path)
-        
         valid = len(issues) == 0
+        
         if valid:
-            log.success(f"Bootloader válido ({size:,} bytes)")
+            self.log.success(f"Bootloader valid ({size:,} bytes)")
         else:
-            log.error(f"Bootloader inválido: {', '.join(issues)}")
+            self.log.error(f"Bootloader invalid: {', '.join(issues)}")
         
         return ValidationResult(
             valid=valid,
@@ -176,7 +176,7 @@ class ArtifactValidator:
         )
     
     def validate_service(self, path: Path, name: str) -> ValidationResult:
-        """Valida binário de serviço (ELF64)."""
+        """Validate a userspace service (ELF64)."""
         issues = []
         
         if not path.exists():
@@ -184,7 +184,7 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.SERVICE,
                 path=path,
-                issues=[f"Serviço {name} não encontrado: {path}"],
+                issues=[f"Service '{name}' not found: {path}"],
             )
         
         size = path.stat().st_size
@@ -193,21 +193,20 @@ class ArtifactValidator:
                 valid=False,
                 artifact_type=ArtifactType.SERVICE,
                 path=path,
-                size=0,
-                issues=[f"Serviço {name} vazio"],
+                issues=[f"Service '{name}' is empty"],
             )
         
-        # Verificar ELF
+        # Check ELF magic
         with open(path, "rb") as f:
             magic = f.read(4)
             if magic != self.ELF_MAGIC:
-                issues.append(f"Serviço {name} não é ELF válido")
+                issues.append(f"Service '{name}' is not a valid ELF")
         
         checksum = self._compute_checksum(path)
-        
         valid = len(issues) == 0
+        
         if valid:
-            log.success(f"Serviço {name} válido ({size:,} bytes)")
+            self.log.success(f"Service '{name}' valid ({size:,} bytes)")
         
         return ValidationResult(
             valid=valid,
@@ -219,7 +218,7 @@ class ArtifactValidator:
         )
     
     def _compute_checksum(self, path: Path) -> str:
-        """Computa SHA256 do arquivo."""
+        """Compute SHA256 checksum of file."""
         sha256 = hashlib.sha256()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
@@ -227,7 +226,7 @@ class ArtifactValidator:
         return sha256.hexdigest()
     
     def generate_manifest(self, results: list[ValidationResult]) -> dict:
-        """Gera manifesto com checksums de todos os artefatos."""
+        """Generate manifest with all artifact checksums."""
         return {
             "artifacts": [
                 {
@@ -240,3 +239,4 @@ class ArtifactValidator:
                 for r in results
             ]
         }
+

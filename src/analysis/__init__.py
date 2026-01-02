@@ -1,20 +1,24 @@
-"""
-Anvil Analysis - Engine de análise de erros e diagnóstico
-"""
+"""Anvil Analysis - Crash analysis and diagnostics."""
 
-from analysis.log_parser import LogParser
-from analysis.exception_detector import ExceptionDetector, CpuException
-from analysis.binary_inspector import BinaryInspector
+from analysis.detector import ExceptionDetector, CpuException
+from analysis.inspector import BinaryInspector, Symbol, Disassembly
+from analysis.patterns import Pattern, Severity, KNOWN_PATTERNS, find_patterns
 from analysis.diagnostics import DiagnosticEngine, Diagnosis
-from analysis.patterns import KNOWN_PATTERNS, Pattern
+from analysis.parser import LogParser, LogEvent
 
 __all__ = [
-    "LogParser",
     "ExceptionDetector",
     "CpuException",
     "BinaryInspector",
+    "Symbol",
+    "Disassembly",
+    "Pattern",
+    "Severity",
+    "KNOWN_PATTERNS",
+    "find_patterns",
     "DiagnosticEngine",
     "Diagnosis",
-    "KNOWN_PATTERNS",
-    "Pattern",
+    "LogParser",
+    "LogEvent",
 ]
+

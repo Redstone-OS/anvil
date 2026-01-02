@@ -1,6 +1,6 @@
-"""
-Anvil CLI - Interface de linha de comando
-"""
+"""Anvil CLI - Modern command-line interface."""
+
+from __future__ import annotations
 
 import asyncio
 from pathlib import Path
@@ -10,36 +10,30 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from anvil import __version__
-from core.config import load_config, AnvilConfig
-from core.paths import PathResolver
-from core.logger import log, console, setup_logging
-from build.cargo import CargoBuilder
-from build.artifacts import ArtifactValidator
-from build.initramfs import InitramfsBuilder
-from build.dist import DistBuilder
-from build.image import ImageBuilder
-from runner.monitor import QemuMonitor
-from runner.qemu import QemuConfig
-from analysis.diagnostics import DiagnosticEngine
-from analysis.log_parser import LogParser
-from analysis.binary_inspector import BinaryInspector
-from runner.serial import PipeSerialListener
+__version__ = "5.0.0"
+from core import Context, load_config, get_logger
+from build import CargoBuilder, ArtifactValidator, DistBuilder, InitramfsBuilder, ImageBuilder
+from runner import QemuMonitor, QemuConfig, PipeListener
+from analysis import DiagnosticEngine, BinaryInspector, LogParser
 
 
-# CLI App
+# ============================================================================
+# App Definition
+# ============================================================================
+
 app = typer.Typer(
     name="anvil",
-    help="🔨 Anvil - Build, Run and Diagnostic Tool for RedstoneOS",
+    help="🔨 Anvil 0.0.5 - Build, Run and Diagnostic Tool for RedstoneOS",
     add_completion=False,
+    no_args_is_help=True,
 )
 
+console = Console()
 
-def get_context() -> tuple[PathResolver, AnvilConfig]:
-    """Obtém contexto de paths e config."""
-    config = load_config()
-    paths = PathResolver(config.project_root)
-    return paths, config
+
+def get_context(verbose: bool = False) -> Context:
+    """Create execution context."""
+    return Context.create(verbose=verbose)
 
 
 # ============================================================================
@@ -48,68 +42,63 @@ def get_context() -> tuple[PathResolver, AnvilConfig]:
 
 @app.command()
 def build(
-    profile: str = typer.Option("release", "--profile", "-p", help="Build profile"),
-    kernel_only: bool = typer.Option(False, "--kernel", "-k", help="Build only kernel"),
-    bootloader_only: bool = typer.Option(False, "--bootloader", "-b", help="Build only bootloader"),
-    services_only: bool = typer.Option(False, "--services", "-s", help="Build only services"),
+    profile: str = typer.Option("release", "-p", "--profile", help="Build profile"),
+    kernel_only: bool = typer.Option(False, "-k", "--kernel", help="Build only kernel"),
+    bootloader_only: bool = typer.Option(False, "-b", "--bootloader", help="Build only bootloader"),
+    services_only: bool = typer.Option(False, "-s", "--services", help="Build only services"),
     no_dist: bool = typer.Option(False, "--no-dist", help="Skip dist preparation"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
 ):
     """Build RedstoneOS components."""
-    setup_logging(verbose=verbose)
-    asyncio.run(_build_async(profile, kernel_only, bootloader_only, services_only, no_dist))
+    asyncio.run(_build(profile, kernel_only, bootloader_only, services_only, no_dist, verbose))
 
 
-async def _build_async(
+async def _build(
     profile: str,
     kernel_only: bool,
     bootloader_only: bool,
     services_only: bool,
     no_dist: bool,
+    verbose: bool,
 ):
-    paths, config = get_context()
-    builder = CargoBuilder(paths.project_root)
-    validator = ArtifactValidator()
+    ctx = get_context(verbose)
+    builder = CargoBuilder(ctx.paths.root, ctx.log)
+    validator = ArtifactValidator(ctx.log)
     
-    log.header(f"Build RedstoneOS ({profile})")
+    ctx.log.header(f"Build RedstoneOS ({profile})")
     
     results = []
     
-    # Decidir o que compilar
+    # Determine what to build
     build_kernel = not (bootloader_only or services_only)
     build_bootloader = not (kernel_only or services_only)
     build_services = not (kernel_only or bootloader_only)
     
     # Kernel
     if build_kernel:
-        result = await builder.build(
-            "Kernel",
-            paths.forge,
-            target=None,  # Uses .cargo/config.toml
-            profile=profile,
-        )
+        result = await builder.build("Kernel", ctx.paths.forge, profile=profile)
         results.append(result)
         
         if result.success:
-            validator.validate_kernel(paths.kernel_binary(profile))
+            validator.validate_kernel(ctx.paths.kernel_binary(profile))
     
     # Bootloader
     if build_bootloader:
         result = await builder.build(
             "Bootloader",
-            paths.ignite,
+            ctx.paths.ignite,
             target="x86_64-unknown-uefi",
             profile=profile,
         )
         results.append(result)
         
         if result.success:
-            validator.validate_bootloader(paths.bootloader_binary(profile))
+            validator.validate_bootloader(ctx.paths.bootloader_binary(profile))
     
     # Services
     if build_services:
-        for svc in config.components.services:
-            svc_path = paths.services / svc.name
+        for svc in ctx.config.components.services:
+            svc_path = ctx.paths.root / svc.path
             result = await builder.build(
                 svc.name,
                 svc_path,
@@ -118,63 +107,19 @@ async def _build_async(
             )
             results.append(result)
     
-    # Verificar resultados
+    # Check results
     all_success = all(r.success for r in results)
     
     if not all_success:
-        log.error("Build falhou!")
+        ctx.log.error("Build failed!")
         raise typer.Exit(1)
     
-    # Preparar dist
+    # Prepare dist
     if not no_dist and all_success:
-        dist_builder = DistBuilder(paths, config)
-        dist_builder.prepare(profile)
-        
-        initramfs_builder = InitramfsBuilder(paths, config)
-        await initramfs_builder.build(profile)
+        DistBuilder(ctx.paths, ctx.config, ctx.log).prepare(profile)
+        await InitramfsBuilder(ctx.paths, ctx.config, ctx.log).build(profile)
     
-    log.success("Build concluído!")
-
-
-# ============================================================================
-# Image Commands
-# ============================================================================
-
-@app.command()
-def vdi(
-    profile: str = typer.Option("release", "--profile", "-p", help="Build profile"),
-    no_build: bool = typer.Option(False, "--no-build", help="Skip build step"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
-):
-    """Create a VDI disk image of RedstoneOS."""
-    setup_logging(verbose=verbose)
-    asyncio.run(_vdi_async(profile, no_build))
-
-
-async def _vdi_async(profile: str, no_build: bool):
-    paths, config = get_context()
-    
-    # Garantir que o build está pronto
-    if not no_build:
-        await _build_async(profile, False, False, False, False)
-    
-    image_builder = ImageBuilder(paths, config)
-    await image_builder.build_vdi(profile)
-
-
-@app.command()
-def listen(
-    pipe: str = typer.Argument(r"\\.\pipe\VBoxCom1", help="Named pipe path (Windows)"),
-):
-    """Listen for serial logs via Named Pipe (VirtualBox)."""
-    setup_logging()
-    
-    listener = PipeSerialListener(pipe)
-    try:
-        asyncio.run(listener.start())
-    except KeyboardInterrupt:
-        log.info("Parando listener serial...")
-        listener.stop()
+    ctx.log.success("Build complete!")
 
 
 # ============================================================================
@@ -183,95 +128,136 @@ def listen(
 
 @app.command()
 def run(
-    profile: str = typer.Option("release", "--profile", "-p", help="Build profile"),
-    no_build: bool = typer.Option(False, "--no-build", help="Skip build step"),
-    timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Timeout in seconds"),
-    gdb: bool = typer.Option(False, "--gdb", "-g", help="Enable GDB server"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    profile: str = typer.Option("release", "-p", "--profile", help="Build profile"),
+    no_build: bool = typer.Option(False, "--no-build", help="Skip build"),
+    timeout: Optional[float] = typer.Option(None, "-t", "--timeout", help="Timeout in seconds"),
+    gdb: bool = typer.Option(False, "-g", "--gdb", help="Enable GDB server"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
 ):
     """Build and run RedstoneOS in QEMU with monitoring."""
-    setup_logging(verbose=verbose)
-    asyncio.run(_run_async(profile, no_build, timeout, gdb))
+    asyncio.run(_run(profile, no_build, timeout, gdb, verbose))
 
 
-async def _run_async(profile: str, no_build: bool, timeout: Optional[float], gdb: bool):
-    paths, config = get_context()
+async def _run(
+    profile: str,
+    no_build: bool,
+    timeout: Optional[float],
+    gdb: bool,
+    verbose: bool,
+):
+    ctx = get_context(verbose)
     
-    # Build se necessário
+    # Build if needed
     if not no_build:
-        await _build_async(profile, False, False, False, False)
+        await _build(profile, False, False, False, False, verbose)
     
-    log.header("Executando QEMU")
+    ctx.log.header("Running QEMU")
     
-    # Configurar monitor
     qemu_config = QemuConfig(
-        memory=config.qemu.memory,
-        debug_flags=config.qemu.logging.flags,
+        memory=ctx.config.qemu.memory,
+        debug_flags=ctx.config.qemu.logging.flags,
         enable_gdb=gdb,
     )
     
+    if gdb:
+        ctx.log.info("Connect debugger to localhost:1234")
+    
     monitor = QemuMonitor(
-        paths, 
-        config,
-        stop_on_exception=config.analysis.stop_on_exception,
+        ctx.paths,
+        ctx.config,
+        ctx.log,
+        stop_on_exception=ctx.config.analysis.stop_on_exception,
     )
     
-    # Executar com monitoramento
     result = await monitor.run_monitored(qemu_config, timeout)
     
-    # Se houve crash, analisar
+    # Analyze crash if detected
     if result.crashed and result.crash_info:
-        log.warning("Crash detectado! Analisando...")
+        ctx.log.warning("Crash detected! Analyzing...")
         
-        engine = DiagnosticEngine(paths, config)
-        diagnosis = await engine.analyze_crash(
-            result.crash_info.exception_type,
-            result.crash_info.context_lines,
-        )
+        engine = DiagnosticEngine(ctx.paths, ctx.config, ctx.log)
+        diagnosis = await engine.analyze(result.crash_info, profile)
         engine.print_diagnosis(diagnosis)
     
-    # Resumo
+    # Summary
     console.print()
-    console.print(f"[dim]Runtime: {result.runtime_ms}ms | Linhas: {result.total_lines}[/dim]")
+    console.print(f"[dim]Runtime: {result.runtime_ms}ms | Lines: {result.total_lines}[/]")
 
 
 # ============================================================================
-# Analysis Commands  
+# Image Commands
+# ============================================================================
+
+@app.command()
+def vdi(
+    profile: str = typer.Option("release", "-p", "--profile", help="Build profile"),
+    no_build: bool = typer.Option(False, "--no-build", help="Skip build"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+):
+    """Create a VDI disk image of RedstoneOS."""
+    asyncio.run(_vdi(profile, no_build, verbose))
+
+
+async def _vdi(profile: str, no_build: bool, verbose: bool):
+    ctx = get_context(verbose)
+    
+    if not no_build:
+        await _build(profile, False, False, False, False, verbose)
+    
+    await ImageBuilder(ctx.paths, ctx.config, ctx.log).build_vdi(profile)
+
+
+@app.command()
+def listen(
+    pipe: str = typer.Argument(r"\\.\pipe\VBoxCom1", help="Named pipe path"),
+):
+    """Listen for serial logs via Named Pipe (VirtualBox)."""
+    ctx = get_context()
+    
+    listener = PipeListener(pipe, ctx.log)
+    try:
+        asyncio.run(listener.start())
+    except KeyboardInterrupt:
+        ctx.log.info("Stopping listener...")
+        listener.stop()
+
+
+# ============================================================================
+# Analysis Commands
 # ============================================================================
 
 @app.command()
 def analyze(
     log_file: Path = typer.Argument(..., help="Log file to analyze"),
-    context: int = typer.Option(50, "--context", "-c", help="Context lines"),
+    context: int = typer.Option(50, "-c", "--context", help="Context lines"),
 ):
     """Analyze a QEMU log file for errors."""
-    setup_logging()
+    ctx = get_context()
     
     if not log_file.exists():
-        log.error(f"Arquivo não encontrado: {log_file}")
+        ctx.log.error(f"File not found: {log_file}")
         raise typer.Exit(1)
     
-    log.header(f"Analisando {log_file.name}")
+    ctx.log.header(f"Analyzing {log_file.name}")
     
     parser = LogParser(context_size=context)
     
     for event in parser.parse_file(log_file):
         if event.event_type == "exception":
-            console.print(f"[red]💥 {event.raw_line}[/red]")
+            console.print(f"[red]💥 {event.raw_line}[/]")
     
-    # Resumo
-    summary = parser.analyze_summary()
+    summary = parser.summary()
     
     console.print()
-    table = Table(title="Resumo da Análise")
-    table.add_column("Métrica")
-    table.add_column("Valor")
+    table = Table(title="Analysis Summary")
+    table.add_column("Metric")
+    table.add_column("Value")
     
-    table.add_row("Total de linhas", str(summary["total_lines"]))
-    table.add_row("Exceções", str(summary["exceptions_count"]))
+    table.add_row("Total lines", str(summary["total_lines"]))
+    table.add_row("Exceptions", str(summary["exceptions_count"]))
     
     for event_type, count in summary["events_by_type"].items():
-        table.add_row(f"Eventos: {event_type}", str(count))
+        table.add_row(f"Events: {event_type}", str(count))
     
     console.print(table)
 
@@ -281,47 +267,47 @@ def inspect(
     check_sse: bool = typer.Option(False, "--check-sse", help="Check for SSE instructions"),
     symbols: bool = typer.Option(False, "--symbols", help="List symbols"),
     sections: bool = typer.Option(False, "--sections", help="List sections"),
-    address: Optional[str] = typer.Option(None, "--address", "-a", help="Disassemble at address"),
+    address: Optional[str] = typer.Option(None, "-a", "--address", help="Disassemble at address"),
 ):
     """Inspect kernel binary."""
-    setup_logging()
-    asyncio.run(_inspect_async(check_sse, symbols, sections, address))
+    asyncio.run(_inspect(check_sse, symbols, sections, address))
 
 
-async def _inspect_async(check_sse: bool, symbols: bool, sections: bool, address: Optional[str]):
-    paths, config = get_context()
-    inspector = BinaryInspector(paths)
+async def _inspect(
+    check_sse: bool,
+    symbols: bool,
+    sections: bool,
+    address: Optional[str],
+):
+    ctx = get_context()
+    inspector = BinaryInspector(ctx.paths, ctx.log)
     
-    kernel = paths.kernel_binary()
+    kernel = ctx.paths.kernel_binary()
     
     if not kernel.exists():
-        log.error(f"Kernel não encontrado: {kernel}")
+        ctx.log.error(f"Kernel not found: {kernel}")
         raise typer.Exit(1)
     
-    log.header(f"Inspecionando {kernel.name}")
+    ctx.log.header(f"Inspecting {kernel.name}")
     
     if check_sse:
-        violations = await inspector.check_sse_instructions(kernel)
+        violations = await inspector.check_sse(kernel)
         if violations:
-            console.print(f"\n[red]Encontradas {len(violations)} instruções SSE/AVX:[/red]")
+            console.print(f"\n[red]Found {len(violations)} SSE/AVX instructions:[/]")
             for v in violations[:20]:
                 console.print(f"  0x{v.address:x}: {v.instruction}")
                 if v.symbol:
-                    console.print(f"    em {v.symbol}")
+                    console.print(f"    in {v.symbol}")
     
     if sections:
-        secs = await inspector.analyze_sections(kernel)
-        table = Table(title="Seções")
-        table.add_column("Nome")
-        table.add_column("Endereço", justify="right")
-        table.add_column("Tamanho", justify="right")
+        secs = await inspector.get_sections(kernel)
+        table = Table(title="Sections")
+        table.add_column("Name")
+        table.add_column("Address", justify="right")
+        table.add_column("Size", justify="right")
         
         for sec in secs:
-            table.add_row(
-                sec.name,
-                f"0x{sec.address:x}",
-                f"{sec.size:,}",
-            )
+            table.add_row(sec.name, f"0x{sec.address:x}", f"{sec.size:,}")
         
         console.print(table)
     
@@ -342,15 +328,15 @@ async def _inspect_async(check_sse: bool, symbols: bool, sections: bool, address
 
 @app.command()
 def stats(
-    path: Path = typer.Option(None, "--path", "-p", help="Path to analyze"),
+    path: Optional[Path] = typer.Option(None, "-p", "--path", help="Path to analyze"),
 ):
     """Count lines of code in the project."""
     import os
     
-    paths, config = get_context()
-    base_path = path or paths.forge / "src"
+    ctx = get_context()
+    base_path = path or ctx.paths.forge / "src"
     
-    log.header(f"Estatísticas: {base_path}")
+    ctx.log.header(f"Statistics: {base_path}")
     
     total_lines = 0
     files_count = 0
@@ -362,17 +348,43 @@ def stats(
                 file_path = Path(root) / file
                 
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    in_block = False
                     for line in f:
-                        stripped = line.strip()
-                        if stripped and not stripped.startswith("//"):
-                            total_lines += 1
+                        s = line.strip()
+                        if not s:
+                            continue
+                        
+                        # Handle block comments
+                        if in_block:
+                            if "*/" in s:
+                                in_block = False
+                                s = s.split("*/", 1)[1].strip()
+                                if not s:
+                                    continue
+                            else:
+                                continue
+                        
+                        if s.startswith("/*"):
+                            if "*/" in s:
+                                s = s.split("*/", 1)[1].strip()
+                                if not s:
+                                    continue
+                            else:
+                                in_block = True
+                                continue
+                        
+                        # Skip single-line comments
+                        if s.startswith("//") or not s:
+                            continue
+                            
+                        total_lines += 1
     
     table = Table()
-    table.add_column("Métrica")
-    table.add_column("Valor", justify="right")
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
     
-    table.add_row("Arquivos .rs", str(files_count))
-    table.add_row("Linhas de código", f"{total_lines:,}")
+    table.add_row(".rs files", str(files_count))
+    table.add_row("Lines of code", f"{total_lines:,}")
     
     console.print(table)
 
@@ -382,27 +394,25 @@ def clean():
     """Clean build artifacts."""
     import shutil
     
-    paths, _ = get_context()
-    
-    log.header("Limpando Artefatos")
+    ctx = get_context()
+    ctx.log.header("Cleaning Artifacts")
     
     targets = [
-        paths.forge / "target",
-        paths.ignite / "target",
-        paths.dist,
+        ctx.paths.forge / "target",
+        ctx.paths.ignite / "target",
+        ctx.paths.dist,
     ]
     
-    # Add service targets
-    for svc_dir in paths.services.iterdir():
+    for svc_dir in ctx.paths.services.iterdir():
         if svc_dir.is_dir():
             targets.append(svc_dir / "target")
     
     for target in targets:
         if target.exists():
-            log.step(f"Removendo {paths.relative(target)}")
+            ctx.log.step(f"Removing {ctx.paths.relative(target)}")
             shutil.rmtree(target)
     
-    log.success("Limpeza concluída!")
+    ctx.log.success("Clean complete!")
 
 
 @app.command()
@@ -410,29 +420,25 @@ def env():
     """Show environment information."""
     import subprocess
     
-    paths, config = get_context()
+    ctx = get_context()
+    ctx.log.header("Environment")
     
-    log.header("Ambiente")
+    console.print("\n[cyan]📂 Directories:[/]")
+    console.print(f"   Project: {ctx.paths.root}")
+    console.print(f"   Forge:   {ctx.paths.forge}")
+    console.print(f"   Ignite:  {ctx.paths.ignite}")
     
-    # Diretórios
-    console.print("\n[cyan]📂 Diretórios:[/cyan]")
-    console.print(f"   Projeto: {paths.project_root}")
-    console.print(f"   Forge:   {paths.forge}")
-    console.print(f"   Ignite:  {paths.ignite}")
-    
-    # Rust
-    console.print("\n[cyan]🦀 Rust:[/cyan]")
+    console.print("\n[cyan]🦀 Rust:[/]")
     try:
         rustc = subprocess.run(["rustc", "--version"], capture_output=True, text=True)
         console.print(f"   {rustc.stdout.strip()}")
         cargo = subprocess.run(["cargo", "--version"], capture_output=True, text=True)
         console.print(f"   {cargo.stdout.strip()}")
     except FileNotFoundError:
-        console.print("   [red]Rust não encontrado[/red]")
+        console.print("   [red]Rust not found[/]")
     
-    # Services
-    console.print("\n[cyan]📦 Serviços:[/cyan]")
-    for svc in config.components.services:
+    console.print("\n[cyan]📦 Services:[/]")
+    for svc in ctx.config.components.services:
         console.print(f"   - {svc.name} ({svc.path})")
 
 
@@ -449,5 +455,15 @@ def version():
     console.print(f"🔨 Anvil v{__version__}")
 
 
-if __name__ == "__main__":
+# ============================================================================
+# Entry Point
+# ============================================================================
+
+def main():
+    """CLI entry point."""
     app()
+
+
+if __name__ == "__main__":
+    main()
+

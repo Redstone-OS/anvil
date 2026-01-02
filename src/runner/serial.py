@@ -1,84 +1,124 @@
+"""Anvil Runner - Serial output colorization and pipe listener."""
+
+from __future__ import annotations
+
 import asyncio
 import re
-from core.logger import log, console
+from typing import Optional, Callable
+
+from core.logger import Logger, get_logger
 
 
-def colorize_line(line: str) -> str:
-    """Aplica cores às tags conhecidas e remove ANSI codes antigos."""
-    # Remover códigos ANSI existentes (escape sequences)
-    ansi_escape = re.compile(r'\x1b\[[0-9;?]*[a-zA-Z]')
-    line = ansi_escape.sub('', line)
-    
-    # Colorir tags conhecidas
-    line = re.sub(r'\[OK\]', '[green][OK][/green]', line)
-    line = re.sub(r'\[FAIL\]', '[red bold][FAIL][/red bold]', line)
-    line = re.sub(r'\[JUMP\]', '[magenta][JUMP][/magenta]', line)
-    line = re.sub(r'\[TRACE\]', '[purple][TRACE][/purple]', line)
-    line = re.sub(r'\[DEBUG\]', '[dim][DEBUG][/dim]', line)
-    line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
-    line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
-    line = re.sub(r'\[ERROR\]', '[red][ERROR][/red]', line)
-    line = re.sub(r'\[Supervisor\]', '[orange1][Supervisor][/orange1]', line)
-    
-    return line
-
-
-class PipeSerialListener:
+class SerialColorizer:
     """
-    Escuta logs de um Named Pipe no Windows (ex: VirtualBox).
+    Colorize serial output with Rich markup.
+    
+    Recognizes common logging tags and applies colors.
     """
     
-    def __init__(self, pipe_path: str):
+    # Tag patterns and their Rich styles
+    PATTERNS = [
+        (r"\[OK\]", "[green][OK][/green]"),
+        (r"\[FAIL\]", "[red bold][FAIL][/red bold]"),
+        (r"\[JUMP\]", "[magenta][JUMP][/magenta]"),
+        (r"\[TRACE\]", "[dim][TRACE][/dim]"),
+        (r"\[DEBUG\]", "[dim cyan][DEBUG][/dim cyan]"),
+        (r"\[INFO\]", "[cyan][INFO][/cyan]"),
+        (r"\[WARN\]", "[yellow][WARN][/yellow]"),
+        (r"\[ERROR\]", "[red][ERROR][/red]"),
+        (r"\[Supervisor\]", "[#ffa500][Supervisor][/#ffa500]"),
+        (r"\[Compositor\]", "[blue][Compositor][/blue]"),
+        (r"\[Shell\]", "[green][Shell][/green]"),
+        (r"\[Input\]", "[magenta][Input][/magenta]"),
+    ]
+    
+    # ANSI escape sequence remover
+    ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+    
+    @classmethod
+    def colorize(cls, line: str) -> str:
+        """Apply Rich color markup to a serial line."""
+        # Remove existing ANSI codes
+        line = cls.ANSI_ESCAPE.sub("", line)
+        
+        # Apply our colors
+        for pattern, replacement in cls.PATTERNS:
+            line = re.sub(pattern, replacement, line)
+        
+        return line
+
+
+class PipeListener:
+    """
+    Listen for serial output via Windows Named Pipe.
+    
+    Used with VirtualBox COM port redirection:
+    - Create a Named Pipe in VirtualBox settings
+    - Connect to it with this listener
+    """
+    
+    def __init__(
+        self,
+        pipe_path: str = r"\\.\pipe\VBoxCom1",
+        log: Optional[Logger] = None,
+        on_line: Optional[Callable[[str], None]] = None,
+    ):
         self.pipe_path = pipe_path
+        self.log = log or get_logger()
+        self.on_line = on_line
         self._stop_event = asyncio.Event()
         self._buffer = ""
-
-    async def start(self):
-        """Inicia a escuta no pipe."""
-        log.header(f"Pipe Serial: {self.pipe_path}")
+    
+    async def start(self) -> None:
+        """Start listening on the pipe."""
+        self.log.header(f"Serial Pipe: {self.pipe_path}")
         
         while not self._stop_event.is_set():
             try:
-                # Usar run_in_executor para não travar o loop de eventos na abertura/leitura do pipe
-                await asyncio.get_event_loop().run_in_executor(None, self._read_pipe)
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self._read_pipe
+                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 if not self._stop_event.is_set():
-                    log.error(f"Erro no pipe: {e}")
+                    self.log.error(f"Pipe error: {e}")
                     await asyncio.sleep(2)
-
-    def _read_pipe(self):
+    
+    def _read_pipe(self) -> None:
+        """Blocking pipe read (runs in executor)."""
         try:
-            # No Windows, pipes podem ser abertos como arquivos binários para leitura
             with open(self.pipe_path, "rb") as f:
-                log.success(f"Conectado ao pipe: {self.pipe_path}")
+                self.log.success(f"Connected to pipe: {self.pipe_path}")
+                
                 while not self._stop_event.is_set():
-                    # Leitura em blocos de 1KB
                     chunk = f.read(1024)
                     if not chunk:
                         break
                     
                     text = chunk.decode("utf-8", errors="replace")
-                    
-                    # Processar linha por linha para aplicar cores corretamente
                     self._buffer += text
+                    
                     if "\n" in self._buffer:
                         lines = self._buffer.split("\n")
-                        # A última parte pode estar incompleta
-                        self._buffer = lines.pop()
+                        self._buffer = lines.pop()  # Keep incomplete line
                         
                         for line in lines:
-                            colored = colorize_line(line)
-                            console.print(colored)
+                            colored = SerialColorizer.colorize(line)
                             
+                            if self.on_line:
+                                self.on_line(colored)
+                            else:
+                                self.log.raw(colored)
+        
         except FileNotFoundError:
-            # Pipe ainda não existe, aguardar em silêncio
+            # Pipe doesn't exist yet
             pass
         except Exception as e:
             if not self._stop_event.is_set():
                 raise e
-
-    def stop(self):
-        """Para a escuta."""
+    
+    def stop(self) -> None:
+        """Stop listening."""
         self._stop_event.set()
+

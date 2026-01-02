@@ -1,210 +1,276 @@
-"""
-Anvil Analysis - Engine de diagnóstico inteligente
-"""
+"""Anvil Analysis - Intelligent crash diagnostics."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from core.config import AnvilConfig
-from core.paths import PathResolver
-from core.logger import console
-from analysis.exception_detector import CpuException, ExceptionContext
-from analysis.binary_inspector import BinaryInspector, Disassembly, Symbol
-from analysis.patterns import find_matching_patterns, Pattern, Severity
+from core.config import Config
+from core.paths import Paths
+from core.logger import Logger, get_logger
+from analysis.detector import CpuException
+from analysis.inspector import BinaryInspector, Symbol, Disassembly
+from analysis.patterns import Pattern, Severity, find_patterns
 from runner.streams import LogEntry
 
 
 @dataclass
 class Diagnosis:
-    """Resultado do diagnóstico."""
+    """Complete crash diagnosis."""
     timestamp: datetime
     exception: CpuException
     
-    # Análise
+    # Analysis results
     symbol: Optional[Symbol] = None
     disassembly: Optional[Disassembly] = None
     matching_patterns: list[Pattern] = field(default_factory=list)
     
-    # Conclusões
+    # Conclusions
     probable_cause: str = ""
     suggestions: list[str] = field(default_factory=list)
     severity: Severity = Severity.CRITICAL
     
-    # Contexto adicional
+    # Context
     context_lines: list[LogEntry] = field(default_factory=list)
-    extra_info: dict = field(default_factory=dict)
+    register_analysis: list[str] = field(default_factory=list)
 
 
 class DiagnosticEngine:
     """
-    Engine inteligente de diagnóstico.
+    Intelligent crash diagnosis engine.
     
     Pipeline:
-    1. Identifica tipo de exceção
-    2. Extrai contexto (RIP, stack, registros)
-    3. Desmonta código no RIP
-    4. Encontra símbolo/função
-    5. Analisa padrões conhecidos
-    6. Verifica binário por problemas relacionados
-    7. Gera diagnóstico com causa provável e sugestões
+    1. Identify exception type
+    2. Extract context (RIP, CR2, registers)
+    3. Disassemble code at RIP
+    4. Find symbol/function
+    5. Match known error patterns
+    6. Analyze register anomalies
+    7. Generate diagnosis with suggestions
     """
     
-    def __init__(self, paths: PathResolver, config: AnvilConfig):
+    def __init__(
+        self,
+        paths: Paths,
+        config: Config,
+        log: Optional[Logger] = None,
+    ):
         self.paths = paths
         self.config = config
-        self.inspector = BinaryInspector(paths)
+        self.log = log or get_logger()
+        self.inspector = BinaryInspector(paths, log)
     
-    async def analyze_crash(
+    async def analyze(
         self,
-        crash_info,  # CrashInfo from runner.monitor
+        crash_info,  # CrashInfo from monitor
+        profile: str = "release",
     ) -> Diagnosis:
         """
-        Analisa crash e gera diagnóstico completo.
+        Analyze crash and generate complete diagnosis.
         """
-        from analysis.exception_detector import CpuException
-        
-        # Criar CpuException a partir do CrashInfo
+        # Create exception object
         exception = CpuException(
             timestamp=crash_info.timestamp,
-            vector=0,  # Será determinado pelo código abaixo
+            vector=self._code_to_vector(crash_info.exception_code),
             name=crash_info.exception_type,
             code=crash_info.exception_code,
             rip=crash_info.rip,
             cr2=crash_info.cr2,
+            rsp=crash_info.rsp,
             raw_line="",
         )
-        
-        # Mapear código para vector
-        code_to_vector = {
-            "#DE": 0x00, "#UD": 0x06, "#DF": 0x08, 
-            "#GP": 0x0D, "#PF": 0x0E,
-        }
-        exception.vector = code_to_vector.get(crash_info.exception_code, 0)
-        
-        context = crash_info.context_lines
         
         diagnosis = Diagnosis(
             timestamp=datetime.now(),
             exception=exception,
-            context_lines=context,
+            context_lines=crash_info.context_lines,
         )
         
-        # 1. Buscar padrões conhecidos
-        context_text = "\n".join(e.line for e in context)
-        diagnosis.matching_patterns = find_matching_patterns(context_text)
+        # 1. Find matching patterns
+        context_text = "\n".join(e.line for e in crash_info.context_lines)
+        diagnosis.matching_patterns = find_patterns(context_text)
         
-        # 2. Localizar símbolo no RIP
+        # 2. Find symbol at RIP
         if exception.rip:
             try:
                 rip_str = exception.rip.replace("RIP=", "").replace("0x", "")
                 rip_addr = int(rip_str, 16)
-                kernel_path = self.paths.kernel_binary()
+                kernel = self.paths.kernel_binary(profile)
                 
-                if kernel_path.exists():
-                    diagnosis.symbol = await self.inspector.find_symbol_at(
-                        kernel_path, rip_addr
+                if kernel.exists():
+                    diagnosis.symbol = await self.inspector.find_symbol(
+                        kernel, rip_addr
                     )
                     
-                    # 3. Desmontar código
+                    # 3. Disassemble
                     diagnosis.disassembly = await self.inspector.disassemble_at(
-                        kernel_path, rip_addr
+                        kernel, rip_addr
                     )
             except ValueError:
                 pass
         
-        # 4. Determinar causa provável
+        # 4. Analyze registers
+        diagnosis.register_analysis = self._analyze_registers(
+            crash_info.context_lines,
+            exception.rip,
+        )
+        
+        # 5. Determine probable cause
         diagnosis.probable_cause = self._determine_cause(diagnosis)
         diagnosis.suggestions = self._generate_suggestions(diagnosis)
         
-        # 5. Determinar severidade
+        # 6. Determine severity
         if diagnosis.matching_patterns:
-            max_severity = max(p.severity for p in diagnosis.matching_patterns)
-            diagnosis.severity = max_severity
+            diagnosis.severity = max(p.severity for p in diagnosis.matching_patterns)
         
         return diagnosis
     
+    def _code_to_vector(self, code: str) -> int:
+        """Convert exception code to vector number."""
+        mapping = {
+            "#DE": 0x00,
+            "#UD": 0x06,
+            "#DF": 0x08,
+            "#GP": 0x0D,
+            "#PF": 0x0E,
+        }
+        return mapping.get(code, 0)
+    
+    def _analyze_registers(
+        self,
+        context: list[LogEntry],
+        rip: Optional[str],
+    ) -> list[str]:
+        """Analyze register values for anomalies."""
+        import re
+        
+        findings = []
+        regs: dict[str, int] = {}
+        
+        # Extract last register values from context
+        for entry in reversed(context):
+            matches = re.findall(
+                r"([R|E][A-Z0-9]+)=([0-9a-fA-F]+)",
+                entry.line,
+            )
+            for reg, val in matches:
+                if reg not in regs:
+                    try:
+                        regs[reg] = int(val, 16)
+                    except ValueError:
+                        pass
+            
+            if "RIP" in regs and "RAX" in regs:
+                break
+        
+        if not regs:
+            return []
+        
+        # Check for NULL pointers
+        for reg in ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP"]:
+            if reg in regs and regs[reg] == 0:
+                findings.append(f"{reg} is NULL - may cause crash if dereferenced")
+        
+        # Check for non-canonical addresses
+        for reg, val in regs.items():
+            if reg in ["RIP", "RSP", "RFLAGS", "CR0", "CR2", "CR3", "CR4"]:
+                continue
+            if len(reg) < 3:
+                continue
+            
+            is_canonical = val < 0x0000800000000000 or val >= 0xFFFF800000000000
+            if not is_canonical and val > 0:
+                findings.append(
+                    f"{reg} has non-canonical address 0x{val:016x} "
+                    "(will cause #GP if accessed)"
+                )
+        
+        # Check RSP
+        if "RSP" in regs:
+            rsp = regs["RSP"]
+            if rsp == 0:
+                findings.append("RSP is NULL! TSS may not be initialized.")
+            elif rsp < 0x1000:
+                findings.append(f"RSP suspiciously low: 0x{rsp:x}")
+        
+        return findings
+    
     def _determine_cause(self, diagnosis: Diagnosis) -> str:
-        """Determina causa provável baseado na análise."""
+        """Determine probable cause based on analysis."""
         exc = diagnosis.exception
         
-        # Usar padrão correspondente se disponível
+        # Use pattern diagnosis if available
         if diagnosis.matching_patterns:
-            pattern = diagnosis.matching_patterns[0]
-            cause = pattern.diagnosis
-            
-            # Adicionar informação de localização
+            cause = diagnosis.matching_patterns[0].diagnosis
             if diagnosis.symbol:
-                cause += f"\n\nLocalização: {diagnosis.symbol.name}"
-            
+                cause += f"\n\nLocation: {diagnosis.symbol.name}"
             return cause
         
-        # Fallback baseado no tipo de exceção
+        # Fallback based on exception type
         causes = {
-            0x00: "Divisão por zero",
-            0x06: "Instrução inválida (possivelmente SSE em código kernel)",
-            0x08: "Double fault - provavelmente stack overflow ou IDT corrompida",
-            0x0D: "Violação de proteção - segmento inválido ou instrução privilegiada",
-            0x0E: f"Page fault no endereço {exc.cr2 or 'desconhecido'}",
+            0x00: "Division by zero",
+            0x06: "Invalid instruction (possibly SSE in kernel)",
+            0x08: "Double fault - likely stack overflow or corrupted IDT",
+            0x0D: "Protection violation - invalid segment or privileged instruction",
+            0x0E: f"Page fault at address {exc.cr2 or 'unknown'}",
         }
         
-        return causes.get(exc.vector, f"Exceção desconhecida (vector {exc.vector})")
+        return causes.get(exc.vector, f"Unknown exception (vector {exc.vector})")
     
     def _generate_suggestions(self, diagnosis: Diagnosis) -> list[str]:
-        """Gera sugestões de correção."""
+        """Generate fix suggestions."""
         suggestions = []
         exc = diagnosis.exception
         
-        # Sugestões dos padrões
+        # Add pattern suggestions
         for pattern in diagnosis.matching_patterns:
             suggestions.append(pattern.solution)
         
-        # Sugestões adicionais baseadas no contexto
+        # Add symbol-based suggestions
         if diagnosis.symbol:
-            suggestions.append(
-                f"Verificar código da função '{diagnosis.symbol.name}'"
-            )
+            suggestions.append(f"Check function '{diagnosis.symbol.name}'")
         
+        # Add exception-specific suggestions
         if exc.vector == 0x0E and exc.cr2:
-            # Page fault
             try:
                 cr2_addr = int(exc.cr2.replace("0x", ""), 16)
                 if cr2_addr < 0x1000:
-                    suggestions.append("NULL pointer dereference detectado")
+                    suggestions.append("NULL pointer dereference detected")
                 elif cr2_addr & 0xFFF == 0:
-                    suggestions.append("Acesso a página não mapeada (possível stack overflow)")
+                    suggestions.append("Unmapped page access (possible stack overflow)")
             except ValueError:
                 pass
         
         if exc.vector == 0x06:
-            suggestions.append("Executar 'anvil inspect kernel --check-sse' para verificar instruções SSE")
+            suggestions.append("Run 'anvil inspect --check-sse' to find SSE instructions")
         
         if not suggestions:
-            suggestions.append("Analisar contexto do log para mais informações")
+            suggestions.append("Analyze log context for more information")
         
         return suggestions
     
     def print_diagnosis(self, diagnosis: Diagnosis) -> None:
-        """Imprime diagnóstico formatado."""
+        """Print formatted diagnosis."""
+        console = Console()
         exc = diagnosis.exception
         
         # Header
         console.print()
         console.print(Panel(
             f"[bold red]💥 {exc.name} ({exc.code})[/bold red]",
-            title="Crash Detectado",
+            title="Crash Detected",
             border_style="red",
         ))
         
-        # Informações básicas
+        # Basic info
         table = Table(show_header=False, box=None)
-        table.add_column("Campo", style="cyan")
-        table.add_column("Valor")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value")
         
         if exc.rip:
             table.add_row("RIP", exc.rip)
@@ -213,171 +279,33 @@ class DiagnosticEngine:
         if exc.rsp:
             table.add_row("RSP", exc.rsp)
         if diagnosis.symbol:
-            table.add_row("Símbolo", diagnosis.symbol.name)
+            table.add_row("Symbol", diagnosis.symbol.name)
         
         console.print(table)
         
-        # Causa provável
+        # Register analysis
+        if diagnosis.register_analysis:
+            console.print("\n[bold yellow]🔬 Register Analysis[/]")
+            for finding in diagnosis.register_analysis:
+                console.print(f"  • {finding}")
+        
+        # Cause
         console.print()
         console.print(Panel(
             diagnosis.probable_cause,
-            title="[yellow]🔍 Causa Provável[/yellow]",
+            title="[yellow]🔍 Probable Cause[/]",
             border_style="yellow",
         ))
         
-        # Sugestões
+        # Suggestions
         if diagnosis.suggestions:
-            console.print()
-            console.print("[cyan]💡 Sugestões:[/cyan]")
+            console.print("\n[cyan]💡 Suggestions:[/]")
             for i, suggestion in enumerate(diagnosis.suggestions, 1):
                 console.print(f"  {i}. {suggestion}")
         
         # Disassembly
         if diagnosis.disassembly and diagnosis.disassembly.instructions:
-            console.print()
-            console.print("[magenta]📋 Código no RIP:[/magenta]")
-            
-            rip = 0
-            if exc.rip:
-                try:
-                    rip = int(exc.rip.replace("0x", ""), 16)
-                except ValueError:
-                    pass
-            
-            for addr, _, asm in diagnosis.disassembly.instructions[:10]:
-                marker = "→" if addr == rip else " "
-                style = "bold red" if addr == rip else ""
-                console.print(f"  {marker} [{style}]0x{addr:016x}: {asm}[/{style}]")
-        
-        # Padrões correspondentes
-        if diagnosis.matching_patterns:
-            console.print()
-            console.print("[blue]📚 Padrões Correspondentes:[/blue]")
-            for pattern in diagnosis.matching_patterns:
-                severity_color = {
-                    Severity.INFO: "blue",
-                    Severity.WARNING: "yellow",
-                    Severity.CRITICAL: "red",
-                }[pattern.severity]
-                console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]: {pattern.diagnosis}")
-        
-        console.print()
-    
-    def _analyze_registers(self, cpu_context: list[LogEntry], rip: Optional[str]) -> list[str]:
-        """Analisa valores dos registradores em busca de anomalias."""
-        findings = []
-        import re
-        
-        # Encontrar último dump de registradores
-        last_regs = {}
-        for entry in reversed(cpu_context):
-            # Parsear linha: RAX=... RBX=...
-            matches = re.findall(r'([R|E][A-Z0-9]+)=([0-9a-fA-F]+)', entry.line)
-            for reg, val in matches:
-                if reg not in last_regs:
-                    try:
-                        last_regs[reg] = int(val, 16)
-                    except ValueError:
-                        pass
-            
-            # Se já achamos RIP e RAX, provavelmente temos um set completo
-            if "RIP" in last_regs and "RAX" in last_regs:
-                break
-        
-        if not last_regs:
-            return []
-            
-        # 1. Null Pointers
-        # Apenas registradores que costumam ser ponteiros em contextos onde 0 é inválido
-        for reg in ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"]:
-            if reg in last_regs and last_regs[reg] == 0:
-                findings.append(f"Registrador [bold]{reg}[/bold] é NULL (0x0). Se for usado como ponteiro, causará crash.")
-
-        # 2. Ponteiros suspeitos (não canônicos)
-        # Faixa buraco: 0x0000_8000_0000_0000 até 0xFFFF_7FFF_FFFF_FFFF
-        for reg, val in last_regs.items():
-            if reg in ["RIP", "RSP", "RFLAGS", "EFLAGS", "CR0", "CR2", "CR3", "CR4"]: continue
-            if len(reg) < 3: continue # Ignorar CS, SS, etc
-            
-            is_canonical = False
-            if val < 0x0000800000000000: is_canonical = True
-            elif val >= 0xFFFF800000000000: is_canonical = True
-            
-            if not is_canonical and val > 0:
-                 findings.append(f"Registrador [bold]{reg}[/bold] tem endereço não-canônico: 0x{val:016x} (Causa imediata de #GP se acessado)")
-
-        # 3. Stack Pointer inválido
-        if "RSP" in last_regs:
-            rsp = last_regs["RSP"]
-            if rsp == 0:
-                findings.append("Stack Pointer (RSP) é NULL!")
-            elif rsp < 0x1000: 
-                 findings.append(f"Stack Pointer (RSP) suspeitosamente baixo: 0x{rsp:x}")
-
-        return findings
-
-    def _colorize_line(self, line: str) -> str:
-        """Aplica cores às tags conhecidas (mesma lógica do Monitor)."""
-        import re
-        ansi_escape = re.compile(r'\x1b\[[0-9;?]*[a-zA-Z]')
-        line = ansi_escape.sub('', line)
-        
-        line = re.sub(r'\[OK\]', '[green][OK][/green]', line)
-        line = re.sub(r'\[FAIL\]', '[red bold][FAIL][/red bold]', line)
-        line = re.sub(r'\[JUMP\]', '[magenta][JUMP][/magenta]', line)
-        line = re.sub(r'\[DEBUG\]', '[dim][DEBUG][/dim]', line)
-        line = re.sub(r'\[INFO\]', '[cyan][INFO][/cyan]', line)
-        line = re.sub(r'\[WARN\]', '[yellow][WARN][/yellow]', line)
-        line = re.sub(r'\[ERROR\]', '[red][ERROR][/red]', line)
-        return line
-
-    def print_full_crash_report(
-        self,
-        diagnosis: Diagnosis,
-        crash_list: list,  # list[CrashInfo]
-        serial_context: list[LogEntry],
-        cpu_context: list[LogEntry],
-    ) -> None:
-        """
-        Imprime relatório completo de crash com análise detalhada.
-        
-        Inclui:
-        - Timeline de exceções
-        - Contexto serial antes do crash
-        - Análise do CPU log
-        - Padrões detectados
-        - Causa provável e sugestões
-        """
-        from rich.panel import Panel
-        from rich.table import Table
-        
-        exc = diagnosis.exception
-        
-
-        
-        # ====================================================================
-        # TIMELINE DE EXCEÇÕES
-        # ====================================================================
-        if len(crash_list) > 1:
-            console.print("\n[bold cyan]📊 Timeline de Exceções[/bold cyan]")
-            for i, crash in enumerate(crash_list, 1):
-                ts = crash.timestamp.strftime("%H:%M:%S.%f")[:-3]
-                console.print(f"  {i}. [{ts}] {crash}")
-        
-        
-        # Análise extra de registradores
-        reg_analysis = self._analyze_registers(cpu_context, exc.rip)
-        if reg_analysis:
-            console.print("\n[bold yellow]🔬 Análise de Registradores[/bold yellow]")
-            for analysis in reg_analysis:
-                console.print(f"  • {analysis}")
-        
-
-        # ====================================================================
-        # DISASSEMBLY
-        # ====================================================================
-        if diagnosis.disassembly and diagnosis.disassembly.instructions:
-            console.print("\n[bold cyan]📋 Código no RIP[/bold cyan]")
+            console.print("\n[magenta]📋 Code at RIP:[/]")
             
             rip = 0
             if exc.rip:
@@ -391,44 +319,16 @@ class DiagnosticEngine:
                 style = "bold red" if addr == rip else "dim"
                 console.print(f"  {marker} [{style}]0x{addr:016x}: {asm}[/{style}]")
         
-        # ====================================================================
-        # PADRÕES CONHECIDOS
-        # ====================================================================
-        #if diagnosis.matching_patterns:
-        #    console.print("\n[bold cyan]📚 Padrões Conhecidos Detectados[/bold cyan]")
-        #    for pattern in diagnosis.matching_patterns:
-        #        severity_color = {
-        #            Severity.INFO: "blue",
-        #            Severity.WARNING: "yellow",
-        #            Severity.CRITICAL: "red",
-        #        }[pattern.severity]
-        #        console.print(f"  • [{severity_color}]{pattern.name}[/{severity_color}]")
-        #        console.print(f"    [dim]{pattern.diagnosis}[/dim]")
+        # Matching patterns
+        if diagnosis.matching_patterns:
+            console.print("\n[blue]📚 Known Patterns:[/]")
+            for pattern in diagnosis.matching_patterns:
+                color = {
+                    Severity.INFO: "blue",
+                    Severity.WARNING: "yellow",
+                    Severity.CRITICAL: "red",
+                }[pattern.severity]
+                console.print(f"  • [{color}]{pattern.name}[/{color}]")
         
-        # ====================================================================
-        # CAUSA PROVÁVEL
-        # ====================================================================
-       # console.print("\n[bold yellow]🎯 Causa Provável[/bold yellow]")
-       # console.print(Panel(
-      #      diagnosis.probable_cause,
-       #     border_style="yellow",
-       # ))
-        
-        # ====================================================================
-        # SUGESTÕES
-        # ====================================================================
-     #   if diagnosis.suggestions:
-      #      console.print("\n[bold green]💡 Sugestões de Correção[/bold green]")
-      #      for i, suggestion in enumerate(diagnosis.suggestions, 1):
-      #          console.print(f"  {i}. {suggestion}")
-        
-        # ====================================================================
-        # PRÓXIMOS PASSOS
-        # ====================================================================
-      #  console.print("\n[bold magenta]🔧 Próximos Passos Recomendados[/bold magenta]")
-     #   console.print("  1. Executar 'anvil run --gdb' para debug interativo")
-     #   console.print("  2. Verificar logs em: anvil/src/logs/...")
-      #  console.print("  3. Analisar binário: 'anvil inspect kernel'")
-        
-       # console.print()
+        console.print()
 

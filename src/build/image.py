@@ -1,80 +1,88 @@
-"""
-Anvil Build - Criação de imagens de disco (VDI)
-"""
+"""Anvil Build - Disk image creation (VDI)."""
+
+from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
 from typing import Optional
 
-from core.config import AnvilConfig
-from core.logger import log
-from core.paths import PathResolver
-from core.exceptions import BuildError
+from core.config import Config
+from core.paths import Paths
+from core.errors import BuildError
+from core.logger import Logger, get_logger
 
 
 class ImageBuilder:
-    """Builder de imagens de disco (RAW e VDI)."""
+    """
+    Disk image builder for VirtualBox/VMware.
     
-    def __init__(self, paths: PathResolver, config: AnvilConfig):
+    Creates:
+    1. RAW image with FAT32 filesystem (via WSL)
+    2. Converts to VDI format (via qemu-img)
+    """
+    
+    def __init__(
+        self,
+        paths: Paths,
+        config: Config,
+        log: Optional[Logger] = None,
+    ):
         self.paths = paths
         self.config = config
-
+        self.log = log or get_logger()
+    
     async def build_vdi(self, profile: str = "release") -> Path:
         """
-        Orquestra a criação de uma imagem VDI.
+        Build a VDI disk image.
         
-        1. Cria imagem RAW (FAT32) via WSL
-        2. Converte para VDI via qemu-img
+        1. Create FAT32 RAW image via WSL
+        2. Convert to VDI via qemu-img
+        
+        Returns:
+            Path to the created VDI file
+        
+        Raises:
+            BuildError: If image creation fails
         """
-        log.header("Criando Imagem VDI")
+        self.log.header("Creating VDI Image")
         
-        # Garantir diretórios
         self.paths.ensure_dirs()
         
         raw_path = self.paths.dist_img / "redstone.raw"
         vdi_path = self.paths.dist_img / "redstone.vdi"
         
-        # 1. Gerar RAW
-        success = await self._create_raw_image(raw_path, profile)
-        if not success:
-            raise BuildError("Falha ao criar imagem RAW", "image")
-            
-        # 2. Converter para VDI
-        success = await self._convert_to_vdi(raw_path, vdi_path)
-        if not success:
-            # Tentar limpar o raw mesmo em falha
-            if raw_path.exists():
-                raw_path.unlink()
-            raise BuildError("Falha ao converter para VDI", "image")
-            
-        # Limpar RAW
-        if raw_path.exists():
-            raw_path.unlink()
-            
-        log.success(f"VDI criada com sucesso: {self.paths.relative(vdi_path)}")
+        # Create RAW image
+        if not await self._create_raw(raw_path, profile):
+            raise BuildError("Failed to create RAW image", "image")
+        
+        # Convert to VDI
+        if not await self._convert_to_vdi(raw_path, vdi_path):
+            raw_path.unlink(missing_ok=True)
+            raise BuildError("Failed to convert to VDI", "image")
+        
+        # Clean up RAW
+        raw_path.unlink(missing_ok=True)
+        
+        self.log.success(f"VDI created: {self.paths.relative(vdi_path)}")
         return vdi_path
-
-    async def _create_raw_image(self, output: Path, profile: str) -> bool:
-        """Cria imagem RAW formatada em FAT32 e copia o conteúdo do dist/qemu."""
-        log.info(f"📂 Gerando imagem RAW ({output.name})...")
+    
+    async def _create_raw(self, output: Path, profile: str) -> bool:
+        """Create FAT32-formatted RAW image with dist/qemu contents."""
+        self.log.info(f"📂 Creating RAW image ({output.name})...")
         
-        # 1. Definir tamanho da imagem (provisório: 64MB)
-        # TODO: Calcular dinamicamente com base no conteúdo
-        img_size_mb = 64
+        img_size_mb = 64  # TODO: Calculate dynamically
         
-        wsl_output = PathResolver.windows_to_wsl(output)
-        wsl_dist = PathResolver.windows_to_wsl(self.paths.dist_qemu)
+        wsl_output = Paths.to_wsl(output)
+        wsl_dist = Paths.to_wsl(self.paths.dist_qemu)
         
-        # Comandos para rodar no WSL:
-        # - Criar arquivo vazio de 64MB
-        # - Formatar como FAT32
-        # - Usar mcopy para copiar recursivamente o conteúdo (preserva estrutura)
-        
+        # WSL commands:
+        # 1. Create empty file
+        # 2. Format as FAT32
+        # 3. Copy contents with mcopy
         commands = [
             f"dd if=/dev/zero of='{wsl_output}' bs=1M count={img_size_mb}",
             f"mkfs.vfat -F 32 '{wsl_output}'",
-            f"mcopy -i '{wsl_output}' -s '{wsl_dist}'/* ::/"
+            f"mcopy -i '{wsl_output}' -s '{wsl_dist}'/* ::/",
         ]
         
         full_cmd = " && ".join(commands)
@@ -86,29 +94,26 @@ class ImageBuilder:
                 stderr=asyncio.subprocess.PIPE,
             )
             
-            stdout, stderr = await process.communicate()
+            _, stderr = await process.communicate()
             
             if process.returncode != 0:
-                log.error(f"Erro no WSL ao criar RAW: {stderr.decode()}")
+                self.log.error(f"WSL error: {stderr.decode()}")
                 return False
-                
-            log.step(f"RAW de {img_size_mb}MB formatado e populado")
-            return True
             
+            self.log.step(f"RAW {img_size_mb}MB formatted and populated")
+            return True
+        
         except Exception as e:
-            log.error(f"Exceção ao criar RAW: {e}")
+            self.log.error(f"Exception creating RAW: {e}")
             return False
-
+    
     async def _convert_to_vdi(self, source: Path, dest: Path) -> bool:
-        """Converte imagem RAW para VDI usando qemu-img."""
-        log.info(f"💾 Convertendo RAW para VDI ({dest.name})...")
+        """Convert RAW image to VDI using qemu-img."""
+        self.log.info(f"💾 Converting to VDI ({dest.name})...")
         
-        # Preferimos usar qemu-img do Windows se disponível, senão via WSL
-        # No Windows geralmente está no PATH se o QEMU estiver instalado
-        
-        # Vamos tentar via WSL primeiro para manter consistência com o resto do build
-        wsl_src = PathResolver.windows_to_wsl(source)
-        wsl_dst = PathResolver.windows_to_wsl(dest)
+        # Try WSL first
+        wsl_src = Paths.to_wsl(source)
+        wsl_dst = Paths.to_wsl(dest)
         
         cmd = f"qemu-img convert -f raw -O vdi '{wsl_src}' '{wsl_dst}'"
         
@@ -119,27 +124,42 @@ class ImageBuilder:
                 stderr=asyncio.subprocess.PIPE,
             )
             
-            stdout, stderr = await process.communicate()
+            _, stderr = await process.communicate()
             
             if process.returncode != 0:
-                # Se falhar no WSL, talvez o qemu-utils não esteja instalado lá
-                log.warning("Falha ao converter via WSL, tentando host...")
-                
-                # Tentar comando direto no Windows
-                process_win = await asyncio.create_subprocess_exec(
-                    "qemu-img", "convert", "-f", "raw", "-O", "vdi", str(source), str(dest),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr_win = await process_win.communicate()
-                
-                if process_win.returncode != 0:
-                    log.error(f"Falha ao converter via host também: {stderr_win.decode()}")
-                    return False
+                # Fallback: try Windows qemu-img
+                self.log.warning("WSL conversion failed, trying Windows...")
+                return await self._convert_windows(source, dest)
             
-            log.step(f"Conversão concluída: {dest.stat().st_size:,} bytes")
+            self.log.step(f"Conversion complete: {dest.stat().st_size:,} bytes")
             return True
-            
+        
         except Exception as e:
-            log.error(f"Exceção na conversão: {e}")
+            self.log.error(f"Exception converting: {e}")
             return False
+    
+    async def _convert_windows(self, source: Path, dest: Path) -> bool:
+        """Fallback: Convert using Windows qemu-img."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "qemu-img", "convert",
+                "-f", "raw",
+                "-O", "vdi",
+                str(source),
+                str(dest),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            
+            _, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                self.log.error(f"Windows conversion failed: {stderr.decode()}")
+                return False
+            
+            return True
+        
+        except FileNotFoundError:
+            self.log.error("qemu-img not found on Windows")
+            return False
+

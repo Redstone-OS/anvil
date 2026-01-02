@@ -1,6 +1,4 @@
-"""
-Anvil - Entry point para execução como módulo (python -m anvil)
-"""
+"""Anvil entry point when run as module: python -m anvil"""
 
 from cli import app
 

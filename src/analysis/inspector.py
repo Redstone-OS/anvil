@@ -1,21 +1,20 @@
-"""
-Anvil Analysis - Inspetor de binários
-"""
+"""Anvil Analysis - Binary inspection and disassembly."""
 
-import asyncio
+from __future__ import annotations
+
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from core.logger import log
+from core.paths import Paths
+from core.logger import Logger, get_logger
 from runner.wsl import WslExecutor
-from core.paths import PathResolver
 
 
 @dataclass
 class Symbol:
-    """Símbolo encontrado no binário."""
+    """Symbol from binary."""
     name: str
     address: int
     size: int = 0
@@ -30,7 +29,7 @@ class Symbol:
 
 @dataclass
 class Section:
-    """Seção do binário."""
+    """Binary section."""
     name: str
     address: int
     size: int
@@ -39,7 +38,7 @@ class Section:
 
 @dataclass
 class Disassembly:
-    """Resultado de disassembly."""
+    """Disassembly result."""
     address: int
     instructions: list[tuple[int, str, str]]  # (addr, bytes, asm)
     symbol: Optional[Symbol] = None
@@ -47,7 +46,7 @@ class Disassembly:
 
 @dataclass
 class SseViolation:
-    """Violação de uso de SSE no kernel."""
+    """SSE instruction found in kernel."""
     address: int
     instruction: str
     context: str = ""
@@ -56,15 +55,15 @@ class SseViolation:
 
 class BinaryInspector:
     """
-    Inspetor de binários para diagnóstico.
+    Binary inspection using WSL tools.
     
-    Usa ferramentas do WSL (objdump, nm, addr2line) para:
-    - Desmontar código em endereço específico
-    - Encontrar símbolos
-    - Detectar instruções SSE proibidas
+    Uses objdump, nm, addr2line to:
+    - Disassemble code at specific addresses
+    - Find symbols for addresses
+    - Detect forbidden SSE/AVX instructions
     """
     
-    # Instruções SSE/AVX a detectar
+    # SSE/AVX instruction patterns
     SSE_PATTERNS = [
         r"\b(movaps|movups|movss|movsd)\b",
         r"\b(addps|addss|subps|subss|mulps|mulss|divps|divss)\b",
@@ -73,8 +72,13 @@ class BinaryInspector:
         r"\b(pxor|movdqa|movdqu|paddd|psubd)\b",
     ]
     
-    def __init__(self, paths: PathResolver):
+    def __init__(
+        self,
+        paths: Paths,
+        log: Optional[Logger] = None,
+    ):
         self.paths = paths
+        self.log = log or get_logger()
         self.wsl = WslExecutor()
         self._sse_regex = re.compile("|".join(self.SSE_PATTERNS), re.IGNORECASE)
     
@@ -85,44 +89,46 @@ class BinaryInspector:
         context: int = 20,
     ) -> Optional[Disassembly]:
         """
-        Desmonta código no endereço especificado.
+        Disassemble code around an address.
         
         Args:
-            binary: Caminho do binário
-            address: Endereço para desmontar
-            context: Número de instruções de contexto
-        """
-        wsl_path = PathResolver.windows_to_wsl(binary)
+            binary: Path to binary file
+            address: Target address
+            context: Number of instructions of context
         
-        # Calcular range
-        start_addr = max(0, address - context * 4)  # Média de 4 bytes por instrução
-        end_addr = address + context * 4
+        Returns:
+            Disassembly with instructions, or None on failure
+        """
+        wsl_path = Paths.to_wsl(binary)
+        
+        # Calculate range (assume ~4 bytes per instruction)
+        start = max(0, address - context * 4)
+        end = address + context * 4
         
         cmd = (
             f"objdump -d --no-show-raw-insn "
-            f"--start-address=0x{start_addr:x} "
-            f"--stop-address=0x{end_addr:x} "
+            f"--start-address=0x{start:x} "
+            f"--stop-address=0x{end:x} "
             f"'{wsl_path}'"
         )
         
         result = await self.wsl.run(cmd)
         
         if not result.success:
-            log.warning(f"objdump falhou: {result.stderr}")
+            self.log.warning(f"objdump failed: {result.stderr}")
             return None
         
-        # Parsear output
         instructions = []
         current_symbol = None
         
         for line in result.stdout.split("\n"):
-            # Detectar símbolo
+            # Detect symbol
             if line.endswith(">:"):
-                sym_match = re.search(r"<(.+)>:", line)
-                if sym_match:
-                    current_symbol = sym_match.group(1)
+                match = re.search(r"<(.+)>:", line)
+                if match:
+                    current_symbol = match.group(1)
             
-            # Parsear instrução
+            # Parse instruction
             match = re.match(r"\s*([0-9a-f]+):\s+(.+)", line, re.IGNORECASE)
             if match:
                 addr = int(match.group(1), 16)
@@ -139,40 +145,34 @@ class BinaryInspector:
             symbol=symbol,
         )
     
-    async def find_symbol_at(self, binary: Path, address: int) -> Optional[Symbol]:
-        """
-        Encontra símbolo no endereço usando addr2line e nm.
-        """
-        wsl_path = PathResolver.windows_to_wsl(binary)
+    async def find_symbol(
+        self,
+        binary: Path,
+        address: int,
+    ) -> Optional[Symbol]:
+        """Find symbol at address using addr2line."""
+        wsl_path = Paths.to_wsl(binary)
         
-        # Tentar addr2line primeiro (com -C para demangle, -f para function name)
+        # Try addr2line first (more accurate)
         cmd = f"addr2line -C -f -e '{wsl_path}' 0x{address:x}"
         result = await self.wsl.run(cmd)
         
         if result.success and result.stdout.strip():
             lines = result.stdout.strip().split("\n")
-            # Output esperado:
-            # FunctionName
-            # /path/to/file.rs:123
             
             if len(lines) >= 2:
                 func_name = lines[0]
                 file_info = lines[1]
                 
-                if func_name != "??" and func_name != "":
-                    file_path: Optional[str] = None
-                    line_num: Optional[int] = None
+                if func_name != "??" and func_name:
+                    file_path = None
+                    line_num = None
                     
                     if ":" in file_info:
-                        # Extrair path e linha
-                        # Cuidado com paths Windows que podem ter C:\... mas addr2line roda no WSL
-                        # Normalmente output é unix style ou relative
                         parts = file_info.rsplit(":", 1)
                         if len(parts) == 2 and parts[1].isdigit():
                             file_path = parts[0]
                             line_num = int(parts[1])
-                        else:
-                            file_path = file_info
                     
                     return Symbol(
                         name=func_name,
@@ -181,14 +181,13 @@ class BinaryInspector:
                         line=line_num,
                     )
         
-        # Fallback: nm e busca manual
+        # Fallback: nm with manual search
         cmd = f"nm -C '{wsl_path}' | sort -k1"
         result = await self.wsl.run(cmd)
         
         if not result.success:
             return None
         
-        # Encontrar símbolo mais próximo
         best_match = None
         best_addr = 0
         
@@ -211,32 +210,34 @@ class BinaryInspector:
         
         return best_match
     
-    async def check_sse_instructions(self, binary: Path) -> list[SseViolation]:
+    async def check_sse(self, binary: Path) -> list[SseViolation]:
         """
-        Escaneia binário por instruções SSE/AVX proibidas.
-        """
-        log.info(f"🔍 Escaneando {binary.name} por instruções SSE/AVX...")
+        Scan binary for forbidden SSE/AVX instructions.
         
-        wsl_path = PathResolver.windows_to_wsl(binary)
+        Returns list of violations found.
+        """
+        self.log.info(f"🔍 Scanning {binary.name} for SSE/AVX...")
+        
+        wsl_path = Paths.to_wsl(binary)
         cmd = f"objdump -d '{wsl_path}'"
         
         result = await self.wsl.run(cmd)
         
         if not result.success:
-            log.warning("Falha ao desmontar binário")
+            self.log.warning("Failed to disassemble binary")
             return []
         
         violations = []
         current_symbol = None
         
         for line in result.stdout.split("\n"):
-            # Detectar símbolo
+            # Track current symbol
             if line.endswith(">:"):
-                sym_match = re.search(r"<(.+)>:", line)
-                if sym_match:
-                    current_symbol = sym_match.group(1)
+                match = re.search(r"<(.+)>:", line)
+                if match:
+                    current_symbol = match.group(1)
             
-            # Verificar SSE
+            # Check for SSE
             if self._sse_regex.search(line):
                 match = re.match(r"\s*([0-9a-f]+):", line, re.IGNORECASE)
                 if match:
@@ -248,15 +249,15 @@ class BinaryInspector:
                     ))
         
         if violations:
-            log.warning(f"⚠️ Encontradas {len(violations)} instruções SSE/AVX!")
+            self.log.warning(f"⚠️ Found {len(violations)} SSE/AVX instructions!")
         else:
-            log.success("Nenhuma instrução SSE/AVX encontrada")
+            self.log.success("No SSE/AVX instructions found")
         
         return violations
     
-    async def analyze_sections(self, binary: Path) -> list[Section]:
-        """Lista seções do binário com tamanhos e permissões."""
-        wsl_path = PathResolver.windows_to_wsl(binary)
+    async def get_sections(self, binary: Path) -> list[Section]:
+        """List binary sections."""
+        wsl_path = Paths.to_wsl(binary)
         cmd = f"objdump -h '{wsl_path}'"
         
         result = await self.wsl.run(cmd)
@@ -266,9 +267,8 @@ class BinaryInspector:
         
         sections = []
         
-        # Parsear output do objdump -h
         for line in result.stdout.split("\n"):
-            # Formato: idx name size vma lma ...
+            # Format: idx name size vma lma ...
             match = re.match(
                 r"\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)",
                 line,
@@ -279,7 +279,7 @@ class BinaryInspector:
                 size = int(match.group(2), 16)
                 addr = int(match.group(3), 16)
                 
-                if size > 0:  # Ignorar seções vazias
+                if size > 0:
                     sections.append(Section(
                         name=name,
                         address=addr,
@@ -289,8 +289,8 @@ class BinaryInspector:
         return sections
     
     async def get_entry_point(self, binary: Path) -> Optional[int]:
-        """Obtém entry point do binário."""
-        wsl_path = PathResolver.windows_to_wsl(binary)
+        """Get binary entry point."""
+        wsl_path = Paths.to_wsl(binary)
         cmd = f"readelf -h '{wsl_path}' | grep 'Entry point'"
         
         result = await self.wsl.run(cmd)
@@ -301,3 +301,4 @@ class BinaryInspector:
                 return int(match.group(1), 16)
         
         return None
+

@@ -1,83 +1,190 @@
-"""
-Anvil Core - Logging estruturado com Rich
-"""
+"""Anvil Core - Structured logging with Rich."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Optional, Callable, Any
 
 from rich.console import Console
 from rich.theme import Theme
+from rich.panel import Panel
 from rich.logging import RichHandler
-import logging
 
-# Tema customizado do Anvil
-ANVIL_THEME = Theme({
+
+class LogLevel(Enum):
+    """Log severity levels."""
+    DEBUG = "debug"
+    INFO = "info"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+# Anvil color theme
+THEME = Theme({
     "info": "cyan",
-    "warning": "yellow",
-    "error": "red bold",
     "success": "green",
+    "warning": "yellow",
+    "error": "bold red",
     "debug": "dim",
-    "header": "cyan bold",
+    "header": "bold cyan",
+    "accent": "#ffa500",  # Orange
+    "muted": "#808080",
     "path": "blue underline",
-    "component": "magenta",
 })
 
-# Console global
-console = Console(theme=ANVIL_THEME)
+
+@dataclass
+class LogEntry:
+    """Single log entry."""
+    timestamp: datetime
+    level: LogLevel
+    message: str
+    source: Optional[str] = None
 
 
-def setup_logging(verbose: bool = False, debug: bool = False) -> None:
-    """Configura logging global com Rich."""
-    level = logging.DEBUG if debug else (logging.INFO if verbose else logging.WARNING)
+class Logger:
+    """
+    Structured logger with Rich formatting.
     
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
-    )
-
-
-class AnvilLogger:
-    """Logger estruturado para o Anvil."""
+    Supports:
+    - Console output with colors
+    - TUI redirection via callbacks
+    - File logging
+    """
     
-    def __init__(self, name: str = "anvil"):
-        self._logger = logging.getLogger(name)
+    def __init__(
+        self,
+        name: str = "anvil",
+        console: Optional[Console] = None,
+        verbose: bool = False,
+    ):
+        self.name = name
+        self.console = console or Console(theme=THEME)
+        self.verbose = verbose
+        self._callbacks: list[Callable[[LogEntry], None]] = []
+        
+        # Setup Python logging integration
+        self._setup_logging()
+    
+    def _setup_logging(self) -> None:
+        """Configure standard Python logging."""
+        level = logging.DEBUG if self.verbose else logging.INFO
+        logging.basicConfig(
+            level=level,
+            format="%(message)s",
+            handlers=[RichHandler(console=self.console, rich_tracebacks=True)],
+        )
+    
+    def add_callback(self, callback: Callable[[LogEntry], None]) -> None:
+        """Add callback for log entries (used by TUI)."""
+        self._callbacks.append(callback)
+    
+    def remove_callback(self, callback: Callable[[LogEntry], None]) -> None:
+        """Remove a callback."""
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+    
+    def _emit(self, level: LogLevel, message: str, **kwargs: Any) -> None:
+        """Internal: emit log entry."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            level=level,
+            message=message,
+            source=kwargs.get("source"),
+        )
+        
+        for callback in self._callbacks:
+            try:
+                callback(entry)
+            except Exception:
+                pass  # Don't let callback errors break logging
+    
+    # =========================================================================
+    # Public API
+    # =========================================================================
     
     def header(self, title: str) -> None:
-        """Imprime cabeçalho de seção."""
-        console.print()
-        console.print("=" * 50, style="cyan")
-        console.print(f"   {title}", style="header")
-        console.print("=" * 50, style="cyan")
+        """Print section header."""
+        self.console.print()
+        self.console.print(f"[bold accent]{'━' * 50}[/]")
+        self.console.print(f"[bold accent]   {title}[/]")
+        self.console.print(f"[bold accent]{'━' * 50}[/]")
+        self._emit(LogLevel.INFO, title)
     
-    def info(self, message: str, **kwargs) -> None:
-        """Log informativo."""
-        console.print(f"[info]ℹ️  {message}[/info]", **kwargs)
+    def info(self, message: str, **kwargs: Any) -> None:
+        """Log informational message."""
+        self.console.print(f"[info]ℹ  {message}[/]")
+        self._emit(LogLevel.INFO, message, **kwargs)
     
-    def success(self, message: str, **kwargs) -> None:
-        """Log de sucesso."""
-        console.print(f"[success]✓ {message}[/success]", **kwargs)
+    def success(self, message: str, **kwargs: Any) -> None:
+        """Log success message."""
+        self.console.print(f"[success]✓  {message}[/]")
+        self._emit(LogLevel.SUCCESS, message, **kwargs)
     
-    def warning(self, message: str, **kwargs) -> None:
-        """Log de aviso."""
-        console.print(f"[warning]⚠️  {message}[/warning]", **kwargs)
+    def warning(self, message: str, **kwargs: Any) -> None:
+        """Log warning message."""
+        self.console.print(f"[warning]⚠  {message}[/]")
+        self._emit(LogLevel.WARNING, message, **kwargs)
     
-    def error(self, message: str, **kwargs) -> None:
-        """Log de erro."""
-        console.print(f"[error]✗ {message}[/error]", **kwargs)
+    def error(self, message: str, **kwargs: Any) -> None:
+        """Log error message."""
+        self.console.print(f"[error]✗  {message}[/]")
+        self._emit(LogLevel.ERROR, message, **kwargs)
     
-    def debug(self, message: str, **kwargs) -> None:
-        """Log de debug."""
-        console.print(f"[debug]🔍 {message}[/debug]", **kwargs)
+    def debug(self, message: str, **kwargs: Any) -> None:
+        """Log debug message (only if verbose)."""
+        if self.verbose:
+            self.console.print(f"[debug]🔍 {message}[/]")
+            self._emit(LogLevel.DEBUG, message, **kwargs)
     
-    def step(self, message: str, **kwargs) -> None:
-        """Log de passo do processo."""
-        console.print(f"  → {message}", style="dim", **kwargs)
+    def step(self, message: str, **kwargs: Any) -> None:
+        """Log process step."""
+        self.console.print(f"[muted]   → {message}[/]")
+        self._emit(LogLevel.INFO, message, **kwargs)
     
     def component(self, name: str, status: str, success: bool = True) -> None:
-        """Log de status de componente."""
+        """Log component build status."""
         icon = "✓" if success else "✗"
-        style = "success" if success else "error"
-        console.print(f"  [{style}]{icon}[/{style}] [component]{name}[/component]: {status}")
+        color = "success" if success else "error"
+        self.console.print(f"   [{color}]{icon}[/] [bold]{name}[/]: {status}")
+        self._emit(
+            LogLevel.SUCCESS if success else LogLevel.ERROR,
+            f"{name}: {status}",
+        )
+    
+    def raw(self, message: str) -> None:
+        """Print raw message without formatting."""
+        self.console.print(message)
+    
+    def print(self, *args: Any, **kwargs: Any) -> None:
+        """Proxy to console.print for compatibility."""
+        self.console.print(*args, **kwargs)
 
 
-# Logger global
-log = AnvilLogger()
+# Global logger instance
+_default_logger: Optional[Logger] = None
+
+
+def get_logger(
+    name: str = "anvil",
+    verbose: bool = False,
+    console: Optional[Console] = None,
+) -> Logger:
+    """Get or create the global logger instance."""
+    global _default_logger
+    
+    if _default_logger is None:
+        _default_logger = Logger(name=name, verbose=verbose, console=console)
+    
+    return _default_logger
+
+
+def reset_logger() -> None:
+    """Reset the global logger (used in tests)."""
+    global _default_logger
+    _default_logger = None
+

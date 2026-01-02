@@ -38,7 +38,7 @@ name = "input"
 path = "services/input"
 target = "x86_64-unknown-none"
 
-[[components.services]]
+[[components.apps]]
 name = "terminal"
 path = "firefly/apps/terminal"
 target = "x86_64-unknown-none"
@@ -53,7 +53,7 @@ ovmf = "assets/OVMF.fd"
 extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
 
 [qemu.logging]
-flags = ["cpu_reset", "int", "mmu", "guest_errors", "unimp"]
+flags = ["cpu_reset", "guest_errors", "unimp"]
 serial_file = "../dist/qemu-serial.log"
 internal_file = "../dist/qemu-internal.log"
 

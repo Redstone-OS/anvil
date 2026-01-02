@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anvil"
-version = "4.0.0"
+version = "0.0.5"
 description = "Build, run and diagnostic tool for RedstoneOS"
 readme = "README.md"
 license = "MIT"
@@ -18,10 +18,11 @@ dependencies = [
     "aiofiles>=23.0",
     "toml>=0.10",
     "pydantic>=2.0",
+    "textual>=0.41.0",
 ]
 
 [project.scripts]
-anvil = "anvil.cli:app"
+anvil = "cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

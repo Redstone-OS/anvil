@@ -1,20 +1,19 @@
-"""
-Anvil Runner - Configuração e lançamento do QEMU
-"""
+"""Anvil Runner - QEMU configuration and launcher."""
+
+from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
-from core.config import AnvilConfig
-from core.logger import log
-from core.paths import PathResolver
+from core.config import Config
+from core.paths import Paths
+from core.logger import Logger, get_logger
 
 
-@dataclass  
+@dataclass
 class QemuConfig:
-    """Configuração específica de execução QEMU."""
+    """QEMU execution configuration."""
     memory: str = "512M"
     serial: str = "stdio"
     monitor: str = "none"
@@ -25,36 +24,38 @@ class QemuConfig:
     gdb_port: int = 1234
 
 
-@dataclass
-class QemuResult:
-    """Resultado da execução QEMU."""
-    exit_code: int
-    runtime_ms: int
-    crashed: bool = False
-    crash_reason: Optional[str] = None
-
-
 class QemuRunner:
-    """Gerenciador de execução QEMU."""
+    """
+    QEMU process manager.
     
-    def __init__(self, paths: PathResolver, config: AnvilConfig):
+    Launches QEMU via WSL with:
+    - UEFI boot from dist/qemu
+    - Serial output via stdio
+    - Debug logging to file
+    - Optional GDB server
+    """
+    
+    def __init__(
+        self,
+        paths: Paths,
+        config: Config,
+        log: Optional[Logger] = None,
+    ):
         self.paths = paths
         self.config = config
+        self.log = log or get_logger()
         self.process: Optional[asyncio.subprocess.Process] = None
     
     def build_command(self, qemu_config: Optional[QemuConfig] = None) -> str:
-        """
-        Constrói comando QEMU para execução no WSL.
-        """
+        """Build the QEMU command line for WSL."""
         cfg = qemu_config or QemuConfig()
         
-        # Caminhos WSL
-        dist_path = PathResolver.windows_to_wsl(self.paths.dist_qemu)
-        internal_log = PathResolver.windows_to_wsl(self.paths.internal_log)
-        serial_log = PathResolver.windows_to_wsl(self.paths.serial_log)
+        # WSL paths
+        dist_path = Paths.to_wsl(self.paths.dist_qemu)
+        internal_log = Paths.to_wsl(self.paths.cpu_log)
+        serial_log = Paths.to_wsl(self.paths.serial_log)
         
-        # Comando base
-        cmd_parts = [
+        parts = [
             "qemu-system-x86_64",
             f"-m {cfg.memory}",
             f"-drive file=fat:rw:'{dist_path}',format=raw",
@@ -69,36 +70,41 @@ class QemuRunner:
         # Debug flags
         debug_flags = cfg.debug_flags or self.config.qemu.logging.flags
         if debug_flags:
-            cmd_parts.append(f"-d {','.join(debug_flags)}")
+            parts.append(f"-d {','.join(debug_flags)}")
         
-        # Log file
-        cmd_parts.append(f"-D '{internal_log}'")
+        # Log files
+        parts.append(f"-D '{internal_log}'")
         
-        # Tee para log serial
-        cmd_parts.append(f"2>&1 | tee '{serial_log}'")
+        # Tee serial to file
+        parts.append(f"2>&1 | tee '{serial_log}'")
         
-        # GDB
+        # GDB server
         if cfg.enable_gdb:
-            cmd_parts.append(f"-s -S")  # -s = gdb on :1234, -S = pause on start
+            parts.append(f"-s -S")  # -s = gdb :1234, -S = pause on start
         
-        # Args extras
+        # Extra args
         for arg in cfg.extra_args:
-            cmd_parts.append(arg)
+            parts.append(arg)
         
-        return " ".join(cmd_parts)
+        return " ".join(parts)
     
-    async def run(self, qemu_config: Optional[QemuConfig] = None) -> asyncio.subprocess.Process:
+    async def start(
+        self,
+        qemu_config: Optional[QemuConfig] = None,
+    ) -> asyncio.subprocess.Process:
         """
-        Inicia QEMU via WSL e retorna o processo.
+        Start QEMU via WSL.
+        
+        Returns the subprocess for monitoring.
         """
-        log.info("🚀 Iniciando QEMU via WSL...")
+        self.log.info("🚀 Starting QEMU via WSL...")
         
         cmd = self.build_command(qemu_config)
-        log.step(f"Comando: {cmd[:80]}...")
+        self.log.step(f"Command: {cmd[:80]}...")
         
-        # Garantir que log existe e está vazio
-        self.paths.internal_log.parent.mkdir(parents=True, exist_ok=True)
-        self.paths.internal_log.write_text("")
+        # Ensure log files exist
+        self.paths.cpu_log.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.cpu_log.write_text("")
         self.paths.serial_log.write_text("")
         
         self.process = await asyncio.create_subprocess_exec(
@@ -107,22 +113,24 @@ class QemuRunner:
             stderr=asyncio.subprocess.STDOUT,
         )
         
-        log.success(f"QEMU iniciado (PID: {self.process.pid})")
+        self.log.success(f"QEMU started (PID: {self.process.pid})")
         return self.process
     
     async def stop(self) -> None:
-        """Para execução do QEMU."""
+        """Stop QEMU process."""
         if self.process:
-            log.info("⏹️ Parando QEMU...")
+            self.log.info("⏹️ Stopping QEMU...")
             self.process.terminate()
+            
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 self.process.kill()
+            
             self.process = None
     
     async def wait(self, timeout: Optional[float] = None) -> int:
-        """Aguarda QEMU terminar."""
+        """Wait for QEMU to exit."""
         if not self.process:
             return -1
         
@@ -136,3 +144,4 @@ class QemuRunner:
                 return await self.process.wait()
         except asyncio.TimeoutError:
             return -1
+

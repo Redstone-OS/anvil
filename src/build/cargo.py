@@ -1,27 +1,27 @@
-"""
-Anvil Build - Wrapper inteligente para Cargo
-"""
+"""Anvil Build - Cargo compilation wrapper."""
+
+from __future__ import annotations
 
 import asyncio
-import subprocess
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Any
 
-from core.logger import log, console
-from core.exceptions import BuildError
+from core.errors import BuildError
+from core.logger import Logger, get_logger
 
 
 @dataclass
 class CargoError:
-    """Erro de compilação do Cargo."""
-    level: str  # error, warning
+    """A single Cargo compilation error."""
+    level: str  # "error" or "warning"
     message: str
     file: Optional[str] = None
     line: Optional[int] = None
     column: Optional[int] = None
-    code: Optional[str] = None  # E0001, etc.
+    code: Optional[str] = None  # E0001, E0308, etc.
     
     def __str__(self) -> str:
         location = ""
@@ -39,7 +39,7 @@ class CargoError:
 
 @dataclass
 class BuildResult:
-    """Resultado de uma compilação."""
+    """Result of a Cargo build."""
     success: bool
     component: str
     profile: str
@@ -58,9 +58,16 @@ class BuildResult:
 
 
 class CargoBuilder:
-    """Wrapper inteligente para Cargo com parsing de erros."""
+    """
+    Intelligent Cargo build wrapper.
     
-    # Regex para parsing de erros do Cargo
+    Features:
+    - Async builds with real-time output
+    - Structured error parsing
+    - Multiple target support
+    """
+    
+    # Patterns for parsing Cargo output
     ERROR_PATTERN = re.compile(
         r"^(?P<level>error|warning)(?:\[(?P<code>E\d+)\])?: (?P<message>.+)$"
     )
@@ -68,8 +75,15 @@ class CargoBuilder:
         r"^\s*--> (?P<file>[^:]+):(?P<line>\d+):(?P<column>\d+)$"
     )
     
-    def __init__(self, project_root: Path):
+    def __init__(
+        self,
+        project_root: Path,
+        log: Optional[Logger] = None,
+        on_output: Optional[Callable[[str], None]] = None,
+    ):
         self.project_root = project_root
+        self.log = log or get_logger()
+        self.on_output = on_output
     
     async def build(
         self,
@@ -80,11 +94,21 @@ class CargoBuilder:
         features: Optional[list[str]] = None,
     ) -> BuildResult:
         """
-        Compila componente e retorna resultado estruturado.
-        """
-        log.info(f"🔨 Compilando {component} ({profile})...")
+        Build a component with Cargo.
         
-        # Construir comando
+        Args:
+            component: Display name (e.g., "Kernel", "Bootloader")
+            path: Path to Cargo.toml directory
+            target: Target triple (uses .cargo/config.toml if None)
+            profile: Build profile ("release", "debug", or custom)
+            features: List of features to enable
+        
+        Returns:
+            BuildResult with success status and any errors
+        """
+        self.log.info(f"🔨 Building {component} ({profile})...")
+        
+        # Build command
         cmd = ["cargo", "build"]
         
         if profile == "release":
@@ -98,9 +122,8 @@ class CargoBuilder:
         if features:
             cmd.extend(["--features", ",".join(features)])
         
-        # Executar
-        import time
-        start_time = time.time()
+        # Execute
+        start = time.time()
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -110,20 +133,45 @@ class CargoBuilder:
                 stderr=asyncio.subprocess.PIPE,
             )
             
-            stdout, stderr = await process.communicate()
-            duration_ms = int((time.time() - start_time) * 1000)
+            all_stderr: list[str] = []
             
-            # Parsear erros
-            errors, warnings = self._parse_output(stderr.decode("utf-8", errors="replace"))
+            # Stream output in real-time
+            async def read_stream(stream: asyncio.StreamReader, is_stderr: bool) -> None:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace").rstrip()
+                    
+                    if is_stderr:
+                        all_stderr.append(decoded)
+                    
+                    # Emit to callback or logger
+                    if self.on_output:
+                        self.on_output(decoded)
+                    else:
+                        self.log.raw(decoded)
+            
+            await asyncio.gather(
+                read_stream(process.stdout, False),
+                read_stream(process.stderr, True),
+            )
+            
+            await process.wait()
+            duration_ms = int((time.time() - start) * 1000)
+            
+            # Parse errors from stderr
+            stderr_text = "\n".join(all_stderr)
+            errors, warnings = self._parse_output(stderr_text)
             
             success = process.returncode == 0
             
             if success:
-                log.success(f"{component} compilado ({duration_ms}ms)")
+                self.log.success(f"{component} built ({duration_ms}ms)")
             else:
-                log.error(f"{component} falhou")
-                for err in errors[:5]:  # Mostrar primeiros 5 erros
-                    console.print(f"  [red]→ {err}[/red]")
+                self.log.error(f"{component} failed")
+                for err in errors[:5]:
+                    self.log.step(str(err))
             
             return BuildResult(
                 success=success,
@@ -133,57 +181,49 @@ class CargoBuilder:
                 errors=errors,
                 warnings=warnings,
             )
-            
+        
         except FileNotFoundError:
-            raise BuildError("Cargo não encontrado. Rust está instalado?", component)
+            raise BuildError("Cargo not found. Is Rust installed?", component)
         except Exception as e:
-            raise BuildError(f"Erro ao executar Cargo: {e}", component)
+            raise BuildError(f"Cargo execution failed: {e}", component)
     
     def _parse_output(self, output: str) -> tuple[list[CargoError], list[CargoError]]:
-        """Parseia output do Cargo para extrair erros e warnings."""
+        """Parse Cargo stderr into structured errors."""
         errors: list[CargoError] = []
         warnings: list[CargoError] = []
         
-        current_error: Optional[CargoError] = None
+        current: Optional[CargoError] = None
         
         for line in output.split("\n"):
-            # Tentar match de erro/warning
+            # Match error/warning header
             match = self.ERROR_PATTERN.match(line)
             if match:
-                if current_error:
-                    if current_error.level == "error":
-                        errors.append(current_error)
-                    else:
-                        warnings.append(current_error)
+                if current:
+                    (errors if current.level == "error" else warnings).append(current)
                 
-                current_error = CargoError(
+                current = CargoError(
                     level=match.group("level"),
                     message=match.group("message"),
                     code=match.group("code"),
                 )
                 continue
             
-            # Tentar match de localização
-            if current_error:
+            # Match location info
+            if current:
                 loc_match = self.LOCATION_PATTERN.match(line)
                 if loc_match:
-                    current_error.file = loc_match.group("file")
-                    current_error.line = int(loc_match.group("line"))
-                    current_error.column = int(loc_match.group("column"))
+                    current.file = loc_match.group("file")
+                    current.line = int(loc_match.group("line"))
+                    current.column = int(loc_match.group("column"))
         
-        # Último erro
-        if current_error:
-            if current_error.level == "error":
-                errors.append(current_error)
-            else:
-                warnings.append(current_error)
+        # Don't forget the last one
+        if current:
+            (errors if current.level == "error" else warnings).append(current)
         
         return errors, warnings
     
-    async def check_targets(self, targets: list[str]) -> dict[str, bool]:
-        """Verifica se targets estão instalados."""
-        result = {}
-        
+    async def check_target(self, target: str) -> bool:
+        """Check if a Rust target is installed."""
         try:
             process = await asyncio.create_subprocess_exec(
                 "rustup", "target", "list", "--installed",
@@ -192,19 +232,13 @@ class CargoBuilder:
             )
             stdout, _ = await process.communicate()
             installed = stdout.decode().strip().split("\n")
-            
-            for target in targets:
-                result[target] = target in installed
-            
+            return target in installed
         except FileNotFoundError:
-            for target in targets:
-                result[target] = False
-        
-        return result
+            return False
     
     async def install_target(self, target: str) -> bool:
-        """Instala target via rustup."""
-        log.info(f"📥 Instalando target {target}...")
+        """Install a Rust target via rustup."""
+        self.log.info(f"📥 Installing target: {target}")
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -215,12 +249,12 @@ class CargoBuilder:
             await process.communicate()
             
             if process.returncode == 0:
-                log.success(f"Target {target} instalado")
+                self.log.success(f"Target {target} installed")
                 return True
             else:
-                log.error(f"Falha ao instalar {target}")
+                self.log.error(f"Failed to install {target}")
                 return False
-                
         except FileNotFoundError:
-            log.error("rustup não encontrado")
+            self.log.error("rustup not found")
             return False
+
