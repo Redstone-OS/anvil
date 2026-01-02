@@ -43,6 +43,11 @@ name = "terminal"
 path = "firefly/apps/terminal"
 target = "x86_64-unknown-none"
 
+[[components.apps]]
+name = "index"
+path = "firefly/apps/index"
+target = "x86_64-unknown-none"
+
 # ============================================================================
 # QEMU
 # ============================================================================
