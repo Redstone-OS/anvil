@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from typing import Optional, Callable
 
 from core.logger import Logger, get_logger
 
 
 class SerialColorizer:
-    """Colorize serial output with Rich markup and clean UEFI/ANSI garbage."""
+    """Colorize serial output and radical clean of UEFI/ANSI garbage."""
     
-    # Remove códigos de controle de terminal (Cursor, Limpar Tela, etc)
-    # Mantemos apenas os códigos de cores (m) para processar depois, ou limpamos tudo e usamos nosso esquema.
-    ANSI_CLEANER = re.compile(r"\x1b\[[0-9;?]*[A-HJKSTfhilmnsu]")
+    # Remove qualquer código de controle ANSI [ ... ]
+    ANSI_CLEANER = re.compile(r"\x1b\[[0-9;?]*[A-Za-z=]")
     
     TAG_PATTERNS = [
         (r"\[OK\]", "[green][OK][/green]"),
@@ -34,20 +32,20 @@ class SerialColorizer:
     
     @classmethod
     def colorize(cls, line: str) -> str:
-        # 1. Remove CODIGOS DE ESCAPE UEFI/ANSI (Lixo visual como [2J, [01;01H)
+        # 1. Limpeza radical: remove códigos de escape
         line = cls.ANSI_CLEANER.sub("", line)
         
-        # 2. Remove caracteres não-imprimíveis estranhos que sobram do UEFI
-        line = "".join(ch for ch in line if ch.isprintable() or ch == '\n')
+        # 2. Mantém apenas caracteres ASCII visíveis padrão e espaços
+        # Isso remove de vez os quadrados/lixo do UEFI
+        line = "".join(ch for ch in line if 32 <= ord(ch) <= 126 or ch == '\n' or ch == '\r')
         
         if not line.strip():
             return ""
 
-        # 3. Aplicar tags de nível de log
+        # 3. Aplicar as cores do Anvil
         for pattern, replacement in cls.TAG_PATTERNS:
             line = re.sub(pattern, replacement, line)
         
-        # 4. Colorir padrões secundários
         line = re.sub(r"(?<!\[)'([^'\]]+)'(?!\[)", r"[green]'\1'[/green]", line)
         line = re.sub(r"(?<!\[)\(([a-zA-Z0-9_ ]+)\)(?![\w\]])", r"[cyan](\1)[/cyan]", line)
         line = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\(\)", r"[cyan]\1()[/cyan]", line)

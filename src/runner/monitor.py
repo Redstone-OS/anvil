@@ -124,7 +124,7 @@ class QemuMonitor:
         try:
             process = await self.runner.start(qemu_config)
             if not process.stdout: return MonitorResult(False, 0, True)
-            serial_task = asyncio.create_task(self.capture.capture_serial(process.stdout, self.paths.serial_log))
+            serial_task = asyncio.create_task(self.capture.capture_serial(process.stdout))
             cpu_task = asyncio.create_task(self.capture.capture_cpu_log(self.paths.cpu_log))
             exit_task = asyncio.create_task(process.wait())
             

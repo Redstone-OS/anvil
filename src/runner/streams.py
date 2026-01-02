@@ -38,8 +38,6 @@ class StreamCapture:
     Captures:
     - QEMU stdout (serial output)
     - QEMU debug log file (CPU events)
-    
-    Provides real-time callbacks and buffered history.
     """
     
     serial_buffer: deque[LogEntry] = field(
@@ -68,55 +66,39 @@ class StreamCapture:
             except Exception:
                 pass
     
-    async def capture_serial(self, stream: asyncio.StreamReader, log_path: Optional[Path] = None) -> None:
-        """Capture serial output and optionally write to a file in real-time."""
+    async def capture_serial(self, stream: asyncio.StreamReader) -> None:
+        """Capture serial output from QEMU stdout (following anvil_old)."""
         self._running = True
         
-        log_file = None
-        if log_path:
-            log_file = open(log_path, "a", encoding="utf-8", errors="replace")
-        
-        try:
-            while self._running:
-                try:
-                    line = await asyncio.wait_for(
-                        stream.readline(),
-                        timeout=0.1,
-                    )
-                    
-                    if not line:
-                        break
-                    
-                    self._serial_count += 1
-                    decoded = line.decode("utf-8", errors="replace").rstrip()
-                    
-                    entry = LogEntry(
-                        timestamp=datetime.now(),
-                        source=StreamSource.SERIAL,
-                        line=decoded,
-                        line_number=self._serial_count,
-                    )
-                    
-                    self.serial_buffer.append(entry)
-                    self._emit(entry)
-                    
-                    if log_file:
-                        log_file.write(decoded + "\n")
-                        log_file.flush()
+        while self._running:
+            try:
+                line = await asyncio.wait_for(stream.readline(), timeout=0.1)
                 
-                except asyncio.TimeoutError:
-                    continue
-                except Exception:
+                if not line:
                     break
-        finally:
-            if log_file:
-                log_file.close()
+                
+                self._serial_count += 1
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                
+                entry = LogEntry(
+                    timestamp=datetime.now(),
+                    source=StreamSource.SERIAL,
+                    line=decoded,
+                    line_number=self._serial_count,
+                )
+                
+                self.serial_buffer.append(entry)
+                self._emit(entry)
+            
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                break
     
     async def capture_cpu_log(self, log_path: Path) -> None:
         """Capture CPU log file (tail -f style)."""
         self._running = True
         
-        # Wait for file to exist
         while self._running and not log_path.exists():
             await asyncio.sleep(0.1)
         
@@ -124,12 +106,9 @@ class StreamCapture:
             return
         
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            # Seek to end
             f.seek(0, 2)
-            
             while self._running:
                 line = f.readline()
-                
                 if not line:
                     await asyncio.sleep(0.05)
                     continue
@@ -139,7 +118,6 @@ class StreamCapture:
                     continue
                 
                 self._cpu_count += 1
-                
                 entry = LogEntry(
                     timestamp=datetime.now(),
                     source=StreamSource.CPU_LOG,
