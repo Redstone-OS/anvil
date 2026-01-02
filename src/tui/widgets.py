@@ -21,6 +21,7 @@ class MenuPanel(Static):
         yield Static("[dim]─── Build ───[/dim]", classes="category")
         yield Button("Release", id="build_release", classes="menu-btn")
         yield Button("Release Limpo", id="build_clean_release", classes="menu-btn")
+        yield Button("Release Otimizado", id="build_opt_release", classes="menu-btn")
         yield Button("Kernel", id="build_kernel", classes="menu-btn")
         yield Button("Bootloader", id="build_bootloader", classes="menu-btn")
         yield Button("Serviços", id="build_services", classes="menu-btn")

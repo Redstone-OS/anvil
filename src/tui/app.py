@@ -118,17 +118,19 @@ class AnvilApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("1", "build_release", "Build Release"),
-        Binding("2", "build_kernel", "Build Kernel"),
-        Binding("3", "build_bootloader", "Build Bootloader"),
-        Binding("4", "build_services", "Build Services"),
+        Binding("2", "build_clean_release", "Build Clean"),
+        Binding("3", "build_opt_release", "Build Opt"),
+        Binding("4", "build_kernel", "Build Kernel"),
+        Binding("5", "build_bootloader", "Build Bootloader"),
+        Binding("6", "build_services", "Build Services"),
         Binding("a", "build_apps", "Build Apps"),
         Binding("v", "create_vdi", "Create VDI"),
-        Binding("5", "run_qemu", "Run QEMU"),
-        Binding("6", "run_qemu_gdb", "Run QEMU + GDB"),
+        Binding("7", "run_qemu", "Run QEMU"),
+        Binding("8", "run_qemu_gdb", "Run QEMU + GDB"),
         Binding("l", "listen_serial", "Listen Serial"),
-        Binding("7", "analyze_log", "Analyze Log"),
-        Binding("8", "inspect_kernel", "Inspect Kernel"),
-        Binding("9", "statistics", "Statistics"),
+        Binding("9", "analyze_log", "Analyze Log"),
+        Binding("i", "inspect_kernel", "Inspect Kernel"),
+        Binding("s", "statistics", "Statistics"),
         Binding("z", "clear_logs", "Clear Logs"),
         Binding("c", "clean", "Clean"),
         Binding("e", "environment", "Environment"),
@@ -244,6 +246,10 @@ class AnvilApp(App):
     @on(Button.Pressed, "#build_clean_release")
     async def on_build_clean_release(self, event: Button.Pressed): 
         event.stop(); await self._run_exclusive("Build Clean", self._build_clean_release)
+
+    @on(Button.Pressed, "#build_opt_release")
+    async def on_build_opt_release(self, event: Button.Pressed): 
+        event.stop(); await self._run_exclusive("Build Opt", self._build_opt_release)
     
     @on(Button.Pressed, "#run_qemu")
     async def on_run_qemu(self, event: Button.Pressed): 
@@ -307,6 +313,8 @@ class AnvilApp(App):
 
     # Keyboard Actions
     async def action_build_release(self): await self._run_exclusive("Build Release", self._build_release)
+    async def action_build_clean_release(self): await self._run_exclusive("Build Clean", self._build_clean_release)
+    async def action_build_opt_release(self): await self._run_exclusive("Build Opt", self._build_opt_release)
     async def action_run_qemu(self): await self._run_exclusive("Run QEMU", self._run_qemu)
     async def action_toggle_menu(self):
         try:
@@ -346,30 +354,75 @@ class AnvilApp(App):
             return False
 
     async def _build_release(self):
+        """Build everything using the standard 'release' profile."""
         from build.dist import DistBuilder
         from build.initramfs import InitramfsBuilder
-        self.log_header("Build Total")
-        if not await self._run_cargo("Kernel", self.paths.forge): return
-        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi"): return
-        for svc in self.config.components.services: await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target)
-        for app in self.config.components.apps: await self._run_cargo(app.name, self.paths.root / app.path, target=app.target)
-        DistBuilder(self.paths, self.config).prepare()
-        await InitramfsBuilder(self.paths, self.config).build()
-        self.log_success("Build concluída!")
+        self.log_header("Build Total (Release)")
+        
+        # Build Kernel, Bootloader, Services and Apps with 'release'
+        if not await self._run_cargo("Kernel", self.paths.forge, profile="release"): return
+        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi", profile="release"): return
+        
+        for svc in self.config.components.services:
+            if not await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target, profile="release"): return
+            
+        for app in self.config.components.apps:
+            if not await self._run_cargo(app.name, self.paths.root / app.path, target=app.target, profile="release"): return
+            
+        DistBuilder(self.paths, self.config).prepare(profile="release")
+        await InitramfsBuilder(self.paths, self.config).build(profile="release")
+        self.log_success("Build Release concluída!")
 
     async def _build_clean_release(self):
-        import shutil
+        """Build with 'clean-release' for the Kernel and 'release' for the rest."""
         from build.dist import DistBuilder
         from build.initramfs import InitramfsBuilder
-        self.log_header("Build Limpa")
+        self.log_header("Build Limpa (Zero Tracer)")
+        
+        # Kernel use 'clean-release'
         if not await self._run_cargo("Kernel", self.paths.forge, profile="clean-release"): return
+        
+        # Rest uses 'release'
+        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi", profile="release"): return
+        
+        for svc in self.config.components.services:
+            if not await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target, profile="release"): return
+            
+        for app in self.config.components.apps:
+            if not await self._run_cargo(app.name, self.paths.root / app.path, target=app.target, profile="release"): return
+            
+        # We need to explicitly point to where artifacts are
+        # DistBuilder and InitramfsBuilder take profile names to find binaries
+        # Since we mix them, cleaner approach: they use 'release' for most, but we handle kernel specially
+        
+        # We tell builders to prepared from 'release', but then 'DistBuilder' will be cheated
+        # if we copy the kernel manually.
+        import shutil
+        self.log_info("Deploying clean artifacts...")
         shutil.copy2(self.paths.kernel_binary("clean-release"), self.paths.kernel_binary("release"))
-        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi"): return
-        for svc in self.config.components.services: await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target)
-        for app in self.config.components.apps: await self._run_cargo(app.name, self.paths.root / app.path, target=app.target)
-        DistBuilder(self.paths, self.config).prepare()
-        await InitramfsBuilder(self.paths, self.config).build()
-        self.log_success("Build concluída!")
+        
+        DistBuilder(self.paths, self.config).prepare(profile="release")
+        await InitramfsBuilder(self.paths, self.config).build(profile="release")
+        self.log_success("Build Limpa concluída!")
+
+    async def _build_opt_release(self):
+        """Build everything using the 'opt-release' production profile."""
+        from build.dist import DistBuilder
+        from build.initramfs import InitramfsBuilder
+        self.log_header("Build Otimizada (PRODUÇÃO)")
+        
+        if not await self._run_cargo("Kernel", self.paths.forge, profile="opt-release"): return
+        if not await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi", profile="opt-release"): return
+        
+        for svc in self.config.components.services:
+            if not await self._run_cargo(svc.name, self.paths.root / svc.path, target=svc.target, profile="opt-release"): return
+            
+        for app in self.config.components.apps:
+            if not await self._run_cargo(app.name, self.paths.root / app.path, target=app.target, profile="opt-release"): return
+            
+        DistBuilder(self.paths, self.config).prepare(profile="opt-release")
+        await InitramfsBuilder(self.paths, self.config).build(profile="opt-release")
+        self.log_success("Build Otimizada concluída!")
 
     async def _build_kernel(self): await self._run_cargo("Kernel", self.paths.forge)
     async def _build_bootloader(self): await self._run_cargo("Bootloader", self.paths.ignite, target="x86_64-unknown-uefi")
