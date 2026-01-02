@@ -28,7 +28,7 @@ class QemuRunner:
     """
     QEMU process manager.
     
-    Launches QEMU via WSL with UEFI boot.
+    Launches QEMU via WSL.
     """
     
     def __init__(
@@ -49,40 +49,33 @@ class QemuRunner:
         dist_path = Paths.to_wsl(self.paths.dist_qemu)
         internal_log = Paths.to_wsl(self.paths.cpu_log)
         
-        # Estrutura base do comando
+        # Comando limpo e direto. Deixamos o Anvil gerenciar os logs.
         parts = [
             "qemu-system-x86_64",
             f"-m {cfg.memory}",
-            # Forçamos o disco a ser a primeira unidade de boot com index=0
             f"-drive file=fat:rw:'{dist_path}',format=raw,if=ide,index=0,media=disk",
             "-bios /usr/share/qemu/OVMF.fd",
-            f"-serial {cfg.serial}",
+            "-serial stdio",
             f"-monitor {cfg.monitor}",
             f"-device VGA,vgamem_mb={cfg.vga_memory}",
             "-no-reboot",
             "-no-shutdown",
-            # Desativa o menu de boot interativo para forçar o carregamento direto
             "-boot menu=off",
         ]
         
-        # Debug flags
+        # Internal QEMU debug logs (CPU, INT, etc)
+        # Note: We always add -D if there are flags, or if the user wants internal logging
         debug_flags = cfg.debug_flags or self.config.qemu.logging.flags
         if debug_flags:
             parts.append(f"-d {','.join(debug_flags)}")
+            parts.append(f"-D '{internal_log}'")
         
-        # Log files
-        parts.append(f"-D '{internal_log}'")
-        
-        # GDB server
         if cfg.enable_gdb:
-            parts.append(f"-s -S")
+            parts.append("-s -S")
         
-        # Extra args
         for arg in cfg.extra_args:
             parts.append(arg)
         
-        # Monta o comando final. 
-        # IMPORTANTE: Removido o 'tee' para evitar lentidão e problemas de sincronia no console.
         return " ".join(parts)
     
     async def start(
@@ -93,15 +86,17 @@ class QemuRunner:
         self.log.info("🚀 Iniciando QEMU via WSL...")
         
         cmd = self.build_command(qemu_config)
-        self.log.step(f"Comando: {cmd[:80]}...")
         
-        # Ensure log files exist
-        self.paths.cpu_log.parent.mkdir(parents=True, exist_ok=True)
-        self.paths.cpu_log.write_text("")
+        # Garante limpeza dos logs físicos
+        if self.paths.cpu_log.exists(): self.paths.cpu_log.unlink()
+        if self.paths.serial_log.exists(): self.paths.serial_log.unlink()
         
-        # Delay de 200ms para garantir que o sistema de arquivos do Windows/WSL está estável
+        # O Anvil criará o qemu-serial.log vazio para o monitoramento
+        self.paths.serial_log.write_text("")
+        
         await asyncio.sleep(0.2)
         
+        # Execução direta, sem shell pipe pra não travar o buffer
         self.process = await asyncio.create_subprocess_exec(
             "wsl", "bash", "-c", cmd,
             stdout=asyncio.subprocess.PIPE,
