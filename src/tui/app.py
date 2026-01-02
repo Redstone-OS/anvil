@@ -133,6 +133,7 @@ class AnvilApp(App):
         Binding("c", "clean", "Clean"),
         Binding("e", "environment", "Environment"),
         Binding("m", "toggle_menu", "Toggle Menu"),
+        Binding("escape", "show_menu", "Show Menu", show=False),
     ]
 
     def __init__(self):
@@ -292,6 +293,13 @@ class AnvilApp(App):
             menu.display = not menu.display
         except: pass
 
+    async def action_show_menu(self):
+        """Specifically ensure the menu is visible (bound to ESC)."""
+        try:
+            menu = self.query_one("#menu_panel")
+            menu.display = True
+        except: pass
+
     # Build/Run logic (remained similar but simplified imports/calls if needed)
     async def _run_cargo(self, name: str, path: Path, target: str = None, profile: str = "release") -> bool:
         self.log_info(f"Construindo {name}...")
@@ -390,10 +398,66 @@ class AnvilApp(App):
         else: self.log_success("Kernel limpo")
 
     async def _statistics(self):
-        self.log_header("Estatísticas")
-        # Simplified for brevity, keeping it functional
-        self.log_info("Calculando...")
-        self.log_success("Concluído (ver log)")
+        self.log_header("Estatísticas do Projeto")
+        self.log_info("Analisando código fonte...")
+        
+        def count_path(path: Path) -> tuple[int, int, int]:
+            """Returns (files, total_lines, code_lines)."""
+            t_files, t_lines, t_code = 0, 0, 0
+            if not path.exists():
+                return 0, 0, 0
+                
+            for p in path.rglob("*.rs"):
+                if "target" in p.parts: continue
+                try:
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()
+                        t_files += 1
+                        t_lines += len(lines)
+                        # Remove comments and empty lines
+                        code = [l for l in lines if l.strip() and not l.strip().startswith("//")]
+                        t_code += len(code)
+                except: pass
+            return t_files, t_lines, t_code
+
+        # Define categories
+        categories = [
+            ("Kernel", self.paths.forge),
+            ("Bootloader", self.paths.ignite),
+        ]
+        
+        # Aggregate Services
+        svc_stats = [0, 0, 0]
+        for svc in self.config.components.services:
+            f, l, c = count_path(self.paths.root / svc.path)
+            svc_stats[0] += f; svc_stats[1] += l; svc_stats[2] += c
+            
+        # Aggregate Apps
+        app_stats = [0, 0, 0]
+        for app in self.config.components.apps:
+            f, l, c = count_path(self.paths.root / app.path)
+            app_stats[0] += f; app_stats[1] += l; app_stats[2] += c
+
+        grand_files = 0
+        grand_code = 0
+
+        self.log_markup(f"[bold]{'Componente':<20} | {'Arquivos':<10} | {'Linhas':<15}[/bold]")
+        self.log_markup("-" * 50)
+
+        for name, path in categories:
+            f, l, c = count_path(path)
+            self.log_markup(f"{name:<20} | {f:<10} | [bold green]{c:<15,}[/bold green]")
+            grand_files += f; grand_code += c
+
+        self.log_markup(f"{'Serviços':<20} | {svc_stats[0]:<10} | [bold green]{svc_stats[2]:<15,}[/bold green]")
+        self.log_markup(f"{'Apps':<20} | {app_stats[0]:<10} | [bold green]{app_stats[2]:<15,}[/bold green]")
+        
+        grand_files += svc_stats[0] + app_stats[0]
+        grand_code += svc_stats[2] + app_stats[2]
+
+        self.log_markup("-" * 50)
+        self.log_markup(f"[bold cyan]{'TOTAL':<20} | {grand_files:<10} | {grand_code:<15,}[/bold cyan]")
+        self.log_success("Análise concluída.")
 
     async def _clean(self):
         import shutil
