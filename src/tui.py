@@ -29,6 +29,7 @@ def show_menu() -> None:
     console.print()
     console.print("[yellow]┌─ Build ─────────────────────────────┐[/yellow]")
     console.print("[yellow]│[/yellow] [green][1][/green] Build Release                   [yellow]│[/yellow]")
+    console.print("[yellow]│[/yellow] [green][O][/green] Build Release Otimizada         [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][2][/dim] Build Kernel Only               [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][3][/dim] Build Bootloader Only           [yellow]│[/yellow]")
     console.print("[yellow]│[/yellow] [dim][4][/dim] Build Services Only             [yellow]│[/yellow]")
@@ -131,6 +132,39 @@ async def handle_choice(choice: str) -> bool:
         
         log.success("Build concluído!")
         
+    elif choice == "O":
+        # Build Release Otimizada
+        log.header("Build Release Otimizada")
+        builder = CargoBuilder(paths.project_root)
+        validator = ArtifactValidator()
+        
+        # Kernel
+        result = await builder.build("Kernel", paths.forge, profile="opt-release")
+        if not result.success:
+            return True
+        validator.validate_kernel(paths.kernel_binary(profile="opt-release"))
+        
+        # Bootloader
+        result = await builder.build("Bootloader", paths.ignite, 
+                                     target="x86_64-unknown-uefi", profile="opt-release")
+        if not result.success:
+            return True
+        validator.validate_bootloader(paths.bootloader_binary(profile="opt-release"))
+        
+        # Services
+        for svc in config.components.services:
+            svc_path = paths.project_root / svc.path
+            await builder.build(svc.name, svc_path, target=svc.target, profile="opt-release")
+        
+        # Dist
+        dist_builder = DistBuilder(paths, config)
+        dist_builder.prepare(profile="opt-release")
+        
+        initramfs_builder = InitramfsBuilder(paths, config)
+        await initramfs_builder.build(profile="opt-release")
+        
+        log.success("Build Otimizado concluído!")
+
     elif choice == "2":
         # Kernel only
         log.header("Build Kernel")
