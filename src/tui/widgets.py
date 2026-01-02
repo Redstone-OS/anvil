@@ -17,8 +17,6 @@ class MenuPanel(Static):
     def compose(self) -> ComposeResult:
         yield Static("[bold #ffa500]⚡ Redstone[/bold #ffa500][bold white]OS[/bold white]\n", classes="menu-title")
 
-        # Build section
-        yield Static("[dim]─── Build ───[/dim]", classes="category")
         yield Button("Release", id="build_release", classes="menu-btn")
         yield Button("Release Limpo", id="build_clean_release", classes="menu-btn")
         yield Button("Release Otimizado", id="build_opt_release", classes="menu-btn")
@@ -27,20 +25,11 @@ class MenuPanel(Static):
         yield Button("Serviços", id="build_services", classes="menu-btn")
         yield Button("Apps", id="build_apps", classes="menu-btn")
         yield Button("Gerar VDI", id="create_vdi", classes="menu-btn")
-        
-        # Run section
-        yield Static("[dim]─── Execute ───[/dim]", classes="category")
         yield Button("QEMU", id="run_qemu", classes="menu-btn")
         yield Button("Monitor Serial", id="listen_serial", classes="menu-btn")
-        
-        # Analysis section
-        yield Static("[dim]─── Análise ───[/dim]", classes="category")
         yield Button("Analisar Log", id="analyze_log", classes="menu-btn")
         yield Button("Inspecionar SSE", id="inspect_kernel", classes="menu-btn")
         yield Button("Estatísticas", id="statistics", classes="menu-btn")
-        
-        # Utility section
-        yield Static("[dim]─── Util ───[/dim]", classes="category")
         yield Button("Limpar Build", id="clean", classes="menu-btn")
         yield Button("Ambiente", id="environment", classes="menu-btn")
         yield Button("Tela Cheia", id="toggle_menu", classes="menu-btn")
