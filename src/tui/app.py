@@ -142,6 +142,12 @@ class AnvilApp(App):
         self.paths = Paths(self.config.project_root)
         self.log_panel = None
         
+        # Setup Logger callback for TUI redirection
+        from core.logger import get_logger
+        self.logger = get_logger()
+        self.logger._callbacks = [] # Clear any existing
+        self.logger.add_callback(self._on_log_entry)
+        
         # State management
         self._is_busy = False
         self._busy_lock = asyncio.Lock()
@@ -187,6 +193,21 @@ class AnvilApp(App):
                 await asyncio.sleep(0.5)
                 self._is_busy = False
                 self._last_action_time = time.time()
+
+    def _on_log_entry(self, entry):
+        """Redirige log entries from the central logger to the TUI panel."""
+        from core.logger import LogLevel
+        if not self.log_panel: return
+        
+        prefix = ""
+        if entry.level == LogLevel.ERROR: prefix = "[bold red]✖ [/bold red]"
+        elif entry.level == LogLevel.SUCCESS: prefix = "[green]✔ [/green]"
+        elif entry.level == LogLevel.WARNING: prefix = "[yellow]⚠ [/yellow]"
+        elif entry.level == LogLevel.DEBUG: prefix = "[dim]🔍 [/dim]"
+        elif entry.level == LogLevel.INFO: prefix = "[blue]ℹ [/blue]"
+        
+        # Avoid double escaping if it's already structured or raw
+        self.log_panel.add_log(f"{prefix}{entry.message}", is_markup=True)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main_container"):
@@ -359,8 +380,8 @@ class AnvilApp(App):
     
     async def _create_vdi(self):
         from build.image import ImageBuilder
-        try: await ImageBuilder(self.paths, self.config).build_vdi(profile="release")
-        except Exception as e: self.log_error(f"Erro VDI: {e}")
+        builder = ImageBuilder(self.paths, self.config, log=self.logger)
+        await builder.build_vdi(profile="release")
 
     async def _run_qemu(self, gdb=False):
         from runner.monitor import QemuMonitor
@@ -379,7 +400,13 @@ class AnvilApp(App):
 
     async def _listen_serial(self):
         from runner.serial import PipeListener
-        await PipeListener(r"\\.\pipe\VBoxCom1").start()
+        
+        # Função segura para ser chamada de fora da thread principal
+        def thread_safe_log(line):
+            self.call_from_thread(self.log_raw, line)
+            
+        listener = PipeListener(r"\\.\pipe\VBoxCom1", on_line=thread_safe_log)
+        await listener.start()
 
     async def _analyze_log(self):
         from analysis.parser import LogParser
