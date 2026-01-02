@@ -20,10 +20,6 @@ class DistBuilder:
     dist/qemu/
     ├── EFI/BOOT/
     │   ├── BOOTX64.EFI    (bootloader)
-    │   └── ignite.cfg     (bootloader config)
-    ├── boot/
-    │   ├── kernel         (kernel binary)
-    │   └── initfs         (initramfs tar)
     └── system/
         └── services/      (userspace services)
     """
@@ -62,7 +58,6 @@ class DistBuilder:
             raise BuildError("Kernel is required", "dist")
         
         self._create_ignite_cfg()
-        self._copy_assets()
         
         self.log.success(f"dist/qemu ready: {self.paths.dist_qemu}")
         return True
@@ -116,27 +111,12 @@ quiet: false
     kernel_path: boot():/boot/kernel
     cmdline: verbose
     module_path: boot():/boot/initfs
-
-# Recovery Entry
-/UEFI Shell (Recovery)
-    protocol: chainload
-    kernel_path: boot():/EFI/BOOT/shellx64.efi
 """
         dest = self.paths.dist_qemu / "EFI" / "BOOT" / "ignite.cfg"
         dest.write_text(cfg_content, encoding="utf-8")
-        self.log.step("ignite.cfg → EFI/BOOT/ignite.cfg")
-    
-    def _copy_assets(self) -> None:
-        """Copy additional boot assets."""
-        # UEFI Shell (optional)
-        shell_source = self.paths.assets / "shellx64.efi"
-        if shell_source.exists():
-            dest = self.paths.dist_qemu / "EFI" / "BOOT" / "shellx64.efi"
-            shutil.copy2(shell_source, dest)
-            self.log.step("UEFI Shell copied")
+        self.log.step("ignite.cfg criado em EFI/BOOT")
     
     def clean(self) -> None:
-        """Clean entire dist directory (use with caution)."""
-        if self.paths.dist.exists():
-            shutil.rmtree(self.paths.dist)
-            self.log.step("Cleaned dist/")
+        """Ensure distribution directory exists without wiping it (following anvil_old)."""
+        self.paths.dist_qemu.mkdir(parents=True, exist_ok=True)
+        self.log.step("dist/qemu preservado (NVRAM mantida)")
