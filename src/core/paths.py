@@ -85,6 +85,16 @@ class Paths:
         return self._root / "firefly"
     
     @property
+    def lib(self) -> Path:
+        """Libraries directory."""
+        return self._root / "lib"
+    
+    @property
+    def sdk(self) -> Path:
+        """SDK directory."""
+        return self._root / "sdk"
+    
+    @property
     def dist(self) -> Path:
         """Distribution output directory."""
         return self._root / "dist"

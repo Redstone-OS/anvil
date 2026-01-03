@@ -491,51 +491,79 @@ class AnvilApp(App):
                 if "target" in p.parts: continue
                 try:
                     with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
                         t_files += 1
-                        t_lines += len(lines)
-                        # Remove comments and empty lines
-                        code = [l for l in lines if l.strip() and not l.strip().startswith("//")]
-                        t_code += len(code)
+                        in_block = False
+                        for line in f:
+                            t_lines += 1
+                            s = line.strip()
+                            if not s: continue
+                            
+                            if in_block:
+                                if "*/" in s:
+                                    in_block = False
+                                    s = s.split("*/", 1)[1].strip()
+                                    if not s: continue
+                                else: continue
+                            
+                            if s.startswith("/*"):
+                                if "*/" in s:
+                                    s = s.split("*/", 1)[1].strip()
+                                    if not s: continue
+                                else:
+                                    in_block = True
+                                    continue
+                            
+                            if s.startswith("//") or not s:
+                                continue
+                            
+                            t_code += 1
                 except: pass
             return t_files, t_lines, t_code
 
+        def scan_crates(base_path: Path) -> tuple[int, int, int]:
+            """Scan all subdirectories that are rust crates."""
+            t_f, t_l, t_c = 0, 0, 0
+            if not base_path.exists(): return 0, 0, 0
+            for item in base_path.iterdir():
+                if item.is_dir() and ((item / "Cargo.toml").exists() or (item / "src").exists()):
+                    f, l, c = count_path(item)
+                    t_f += f; t_l += l; t_c += c
+            return t_f, t_l, t_c
+
         # Define categories
-        categories = [
+        items = [
             ("Kernel", self.paths.forge),
             ("Bootloader", self.paths.ignite),
+            ("Compositor", self.paths.root / "firefly" / "compositor"),
+            ("Shell", self.paths.root / "firefly" / "shell"),
         ]
         
-        # Aggregate Services
-        svc_stats = [0, 0, 0]
-        for svc in self.config.components.services:
-            f, l, c = count_path(self.paths.root / svc.path)
-            svc_stats[0] += f; svc_stats[1] += l; svc_stats[2] += c
-            
-        # Aggregate Apps
-        app_stats = [0, 0, 0]
-        for app in self.config.components.apps:
-            f, l, c = count_path(self.paths.root / app.path)
-            app_stats[0] += f; app_stats[1] += l; app_stats[2] += c
+        groups = [
+            ("Serviços", self.paths.services),
+            ("Apps", self.paths.root / "firefly" / "apps"),
+            ("Bibliotecas", self.paths.lib),
+            ("SDK", self.paths.sdk),
+        ]
 
         grand_files = 0
         grand_code = 0
 
         self.log_markup(f"[bold]{'Componente':<20} | {'Arquivos':<10} | {'Linhas':<15}[/bold]")
-        self.log_markup("-" * 50)
+        self.log_markup("-" * 55)
 
-        for name, path in categories:
+        for name, path in items:
             f, l, c = count_path(path)
-            self.log_markup(f"{name:<20} | {f:<10} | [bold green]{c:<15,}[/bold green]")
-            grand_files += f; grand_code += c
+            if f > 0:
+                self.log_markup(f"{name:<20} | {f:<10} | [bold green]{c:<15,}[/bold green]")
+                grand_files += f; grand_code += c
 
-        self.log_markup(f"{'Serviços':<20} | {svc_stats[0]:<10} | [bold green]{svc_stats[2]:<15,}[/bold green]")
-        self.log_markup(f"{'Apps':<20} | {app_stats[0]:<10} | [bold green]{app_stats[2]:<15,}[/bold green]")
-        
-        grand_files += svc_stats[0] + app_stats[0]
-        grand_code += svc_stats[2] + app_stats[2]
+        for name, path in groups:
+            f, l, c = scan_crates(path)
+            if f > 0:
+                self.log_markup(f"{name:<20} | {f:<10} | [bold green]{c:<15,}[/bold green]")
+                grand_files += f; grand_code += c
 
-        self.log_markup("-" * 50)
+        self.log_markup("-" * 55)
         self.log_markup(f"[bold cyan]{'TOTAL':<20} | {grand_files:<10} | {grand_code:<15,}[/bold cyan]")
         self.log_success("Análise concluída.")
 
