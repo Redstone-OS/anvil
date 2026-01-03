@@ -144,11 +144,15 @@ class InitramfsBuilder:
                 self.log.warning(f"Service '{svc.name}' not found: {svc_path}")
                 continue
             
-            dest = services_dir / svc.name
+            # New structure: /system/services/{name}/{name}.app
+            dest_dir = services_dir / svc.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / f"{svc.name}.app"
+            
             shutil.copy2(svc_path, dest)
             deployed += 1
             
-            self.log.step(f"/system/services/{svc.name} ({svc_path.stat().st_size:,} bytes)")
+            self.log.step(f"/system/services/{svc.name}/{svc.name}.app ({svc_path.stat().st_size:,} bytes)")
         
         self.log.success(f"Deployed {deployed} services")
     
@@ -171,17 +175,21 @@ class InitramfsBuilder:
                 self.log.warning(f"App '{app.name}' not found: {app_path}")
                 continue
             
-            dest = apps_dir / app.name
+            # New structure: /apps/system/{name}/{name}.app
+            dest_dir = apps_dir / app.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / f"{app.name}.app"
+            
             shutil.copy2(app_path, dest)
             deployed += 1
             
-            self.log.step(f"/apps/system/{app.name} ({app_path.stat().st_size:,} bytes)")
+            self.log.step(f"/apps/system/{app.name}/{app.name}.app ({app_path.stat().st_size:,} bytes)")
         
         self.log.success(f"Deployed {deployed} apps")
     
     def _create_manifest(self) -> None:
         """Create services manifest."""
-        manifests_dir = self.paths.dist_qemu / "system" / "manifests"
+        manifests_dir = self.paths.dist_qemu / "system" / "manifests" / "services"
         manifests_dir.mkdir(parents=True, exist_ok=True)
         
         manifest_path = manifests_dir / "services.toml"
@@ -199,7 +207,7 @@ class InitramfsBuilder:
             lines.extend([
                 f"[[service]]",
                 f'name = "{svc.name}"',
-                f'path = "/system/services/{svc.name}"',
+                f'path = "/system/services/{svc.name}/{svc.name}.app"',
                 f'restart = "always"',
                 "",
             ])

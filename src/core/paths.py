@@ -223,6 +223,9 @@ class Paths:
             self.dist_qemu / "EFI" / "BOOT",
             self.dist_qemu / "boot",
             self.dist_qemu / "system" / "services",
+            self.dist_qemu / "apps" / "system",
+            self.dist_qemu / "system" / "manifests" / "services",
+            self.dist_qemu / "system" / "manifests" / "apps",
             self.initramfs,
             self.anvil_log_dir,
         ]
