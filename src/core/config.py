@@ -50,7 +50,7 @@ class QemuLogging:
 class QemuConfig:
     """QEMU execution configuration."""
     memory: str = "512M"
-    vga_memory: int = 16
+    vga_memory: int = 256
     ovmf: str = "/usr/share/qemu/OVMF.fd"
     serial: str = "stdio"
     monitor: str = "none"
@@ -142,6 +142,7 @@ class Config:
         qemu_data = data.get("qemu", {}).copy()
         logging_data = qemu_data.pop("logging", {})
         qemu_logging = QemuLogging(**logging_data)
+        
         qemu = QemuConfig(**qemu_data, logging=qemu_logging)
         
         # Parse analysis config
@@ -187,27 +188,23 @@ def find_config_file() -> Path:
 def load_config(config_path: Optional[Path] = None) -> Config:
     """
     Load configuration from TOML file.
-    
-    Args:
-        config_path: Explicit path to anvil.toml (auto-detected if None)
-    
-    Returns:
-        Parsed Config object
-    
-    Raises:
-        ConfigError: If file not found or parsing fails
     """
+    from core.logger import get_logger
+    logger = get_logger()
+    
     if config_path is None:
         config_path = find_config_file()
     
+    logger.info(f"📂 Carregando config de: {config_path.absolute()}")
+    
     if not config_path.exists():
+        logger.error(f"❌ Arquivo não encontrado: {config_path}")
         raise ConfigError(f"Config file not found: {config_path}")
     
     try:
         data = toml.load(config_path)
         return Config.from_dict(data, config_path)
-    except toml.TomlDecodeError as e:
-        raise ConfigError(f"Invalid TOML in {config_path}", str(e))
     except Exception as e:
+        logger.error(f"❌ Erro ao carregar config: {e}")
         raise ConfigError(f"Failed to load config: {config_path}", str(e))
 

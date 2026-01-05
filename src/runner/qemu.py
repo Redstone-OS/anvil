@@ -65,7 +65,14 @@ class QemuRunner:
             cmd_parts.append(f"-s -S -p {cfg.gdb_port}")
         
         # Args extras (including those in anvil.toml like VGA, no-reboot, etc)
-        for arg in cfg.extra_args:
+        extra = cfg.extra_args
+        
+        # SAFETY FALLBACK: If for some reason extra_args is empty or missing virtio, force it
+        if not any("virtio-gpu" in str(a) for a in extra):
+            if "-device" not in extra:
+                extra.extend(["-device", "virtio-gpu-pci"])
+        
+        for arg in extra:
             if arg not in cmd_parts:
                 cmd_parts.append(arg)
         
@@ -84,7 +91,7 @@ class QemuRunner:
         self.log.info("🚀 Iniciando QEMU via WSL...")
         
         cmd = self.build_command(override_config)
-        self.log.step(f"Comando: {cmd[:80]}...")
+        self.log.info(f"Comando QEMU: {cmd}")
         
         # Garantir logs limpos
         self.paths.cpu_log.parent.mkdir(parents=True, exist_ok=True)

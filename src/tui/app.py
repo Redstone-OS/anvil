@@ -140,15 +140,17 @@ class AnvilApp(App):
 
     def __init__(self):
         super().__init__()
+        
+        # 1. Setup Logger
+        from core.logger import get_logger
+        self.logger = get_logger()
+        self.logger._callbacks = [] 
+        self.logger.add_callback(self._on_log_entry)
+        
+        # 2. Now load config
         self.config = load_config()
         self.paths = Paths(self.config.project_root)
         self.log_panel = None
-        
-        # Setup Logger callback for TUI redirection
-        from core.logger import get_logger
-        self.logger = get_logger()
-        self.logger._callbacks = [] # Clear any existing
-        self.logger.add_callback(self._on_log_entry)
         
         # State management
         self._is_busy = False

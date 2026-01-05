@@ -59,7 +59,9 @@ serial = "stdio"
 monitor = "none"
 enable_gdb = false
 gdb_port = 1234
-extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
+extra_args = ["-no-reboot", "-no-shutdown", "-device", "virtio-gpu-pci"]
+# Para video VGA
+# extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
 
 [qemu.logging]
 flags = ["cpu_reset", "guest_errors", "unimp"]
