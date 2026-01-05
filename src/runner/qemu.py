@@ -46,7 +46,7 @@ class QemuRunner:
         cmd_parts = [
             "qemu-system-x86_64",
             f"-m {cfg.memory}",
-            f"-drive if=ide,file=fat:rw:'{dist_path}',format=raw",
+            f"-drive if={cfg.drive_interface},file=fat:rw:'{dist_path}',format=raw",
             f"-bios '{ovmf_path}'",
             f"-serial {cfg.serial}",
             f"-monitor {cfg.monitor}",

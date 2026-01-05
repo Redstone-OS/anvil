@@ -53,15 +53,17 @@ target = "x86_64-unknown-none"
 # ============================================================================
 
 [qemu]
-memory = "256M"
+memory = "512M"
 ovmf = "/usr/share/qemu/OVMF.fd"
 serial = "stdio"
 monitor = "none"
+drive_interface = "virtio"
 enable_gdb = false
 gdb_port = 1234
 extra_args = ["-no-reboot", "-no-shutdown", "-device", "virtio-gpu-pci"]
 # Para video VGA
 # extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
+# drive_interface: str = "virtio" nao funciona, tem que ser configurado manualmente
 
 [qemu.logging]
 flags = ["cpu_reset", "guest_errors", "unimp"]

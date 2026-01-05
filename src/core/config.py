@@ -54,6 +54,7 @@ class QemuConfig:
     ovmf: str = "/usr/share/qemu/OVMF.fd"
     serial: str = "stdio"
     monitor: str = "none"
+    drive_interface: str = "ide"
     enable_gdb: bool = False
     gdb_port: int = 1234
     extra_args: list[str] = field(default_factory=lambda: ["-no-reboot", "-no-shutdown"])
@@ -144,6 +145,8 @@ class Config:
         qemu_logging = QemuLogging(**logging_data)
         
         qemu = QemuConfig(**qemu_data, logging=qemu_logging)
+        from core.logger import get_logger
+        get_logger().info(f"DEBUG: drive_interface carregado: {qemu.drive_interface}")
         
         # Parse analysis config
         analysis_data = data.get("analysis", {}).copy()
