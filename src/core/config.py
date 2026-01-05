@@ -51,9 +51,14 @@ class QemuConfig:
     """QEMU execution configuration."""
     memory: str = "512M"
     vga_memory: int = 16
-    ovmf: str = "assets/OVMF.fd"
+    ovmf: str = "/usr/share/qemu/OVMF.fd"
+    serial: str = "stdio"
+    monitor: str = "none"
+    enable_gdb: bool = False
+    gdb_port: int = 1234
     extra_args: list[str] = field(default_factory=lambda: ["-no-reboot", "-no-shutdown"])
     logging: QemuLogging = field(default_factory=QemuLogging)
+    debug_flags: Optional[list[str]] = None
 
 
 @dataclass

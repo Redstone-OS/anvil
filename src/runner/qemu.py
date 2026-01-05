@@ -6,22 +6,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.config import Config
+from core.config import Config, QemuConfig
 from core.paths import Paths
 from core.logger import Logger, get_logger
-
-
-@dataclass
-class QemuConfig:
-    """QEMU execution configuration."""
-    memory: str = "512M"
-    serial: str = "stdio"
-    monitor: str = "none"
-    vga_memory: int = 16
-    debug_flags: list[str] = field(default_factory=list)
-    extra_args: list[str] = field(default_factory=list)
-    enable_gdb: bool = False
-    gdb_port: int = 1234
 
 
 class QemuRunner:
@@ -41,57 +28,62 @@ class QemuRunner:
         self.config = config
         self.log = log or get_logger()
         self.process: Optional[asyncio.subprocess.Process] = None
-    
-    def build_command(self, qemu_config: Optional[QemuConfig] = None) -> str:
+
+    def build_command(self, override_config: Optional[QemuConfig] = None) -> str:
         """Build the QEMU command line for WSL."""
-        cfg = qemu_config or QemuConfig()
+        cfg = override_config or self.config.qemu
         
         dist_path = Paths.to_wsl(self.paths.dist_qemu)
         internal_log = Paths.to_wsl(self.paths.cpu_log)
         serial_log = Paths.to_wsl(self.paths.serial_log)
         
-        # Comando EXATAMENTE igual ao anvil_old
+        # Resolve OVMF path (if relative, it's relative to project root)
+        ovmf_path = cfg.ovmf
+        if not ovmf_path.startswith("/"):
+            ovmf_path = Paths.to_wsl(self.config.project_root / ovmf_path)
+
+        # Base command with memory and bios
         cmd_parts = [
             "qemu-system-x86_64",
             f"-m {cfg.memory}",
-            f"-drive file=fat:rw:'{dist_path}',format=raw",
-            "-bios /usr/share/qemu/OVMF.fd",
+            f"-drive if=ide,file=fat:rw:'{dist_path}',format=raw",
+            f"-bios '{ovmf_path}'",
             f"-serial {cfg.serial}",
             f"-monitor {cfg.monitor}",
-            f"-device VGA,vgamem_mb={cfg.vga_memory}",
-            "-no-reboot",
-            "-no-shutdown",
         ]
         
-        # Debug flags
-        debug_flags = cfg.debug_flags or self.config.qemu.logging.flags
-        if debug_flags:
-            cmd_parts.append(f"-d {','.join(debug_flags)}")
+        # Logging flags
+        flags = cfg.debug_flags or cfg.logging.flags
+        if flags:
+            cmd_parts.append(f"-d {','.join(flags)}")
         
         # Log file interno (CPU)
         cmd_parts.append(f"-D '{internal_log}'")
         
-        # Tee para log serial (redireciona stderr para stdout e grava no arquivo)
-        cmd_parts.append(f"2>&1 | tee '{serial_log}'")
-        
         # GDB
         if cfg.enable_gdb:
-            cmd_parts.append("-s -S")
+            cmd_parts.append(f"-s -S -p {cfg.gdb_port}")
         
-        # Args extras
+        # Args extras (including those in anvil.toml like VGA, no-reboot, etc)
         for arg in cfg.extra_args:
-            cmd_parts.append(arg)
+            if arg not in cmd_parts:
+                cmd_parts.append(arg)
         
-        return " ".join(cmd_parts)
+        # Final redirect for serial log
+        # Note: tee must be the LAST part of the constructed shell string
+        full_cmd = " ".join(cmd_parts)
+        full_cmd += f" 2>&1 | tee '{serial_log}'"
+        
+        return full_cmd
     
     async def start(
         self,
-        qemu_config: Optional[QemuConfig] = None,
+        override_config: Optional[QemuConfig] = None,
     ) -> asyncio.subprocess.Process:
         """Start QEMU via WSL."""
         self.log.info("🚀 Iniciando QEMU via WSL...")
         
-        cmd = self.build_command(qemu_config)
+        cmd = self.build_command(override_config)
         self.log.step(f"Comando: {cmd[:80]}...")
         
         # Garantir logs limpos

@@ -58,6 +58,7 @@ class DistBuilder:
             raise BuildError("Kernel is required", "dist")
         
         self._create_ignite_cfg()
+        self._create_startup_nsh()
         
         self.log.success(f"dist/qemu ready: {self.paths.dist_qemu}")
         return True
@@ -115,6 +116,17 @@ quiet: false
         dest = self.paths.dist_qemu / "EFI" / "BOOT" / "ignite.cfg"
         dest.write_text(cfg_content, encoding="utf-8")
         self.log.step("ignite.cfg criado em EFI/BOOT")
+    
+    def _create_startup_nsh(self) -> None:
+        """Create UEFI Shell startup script for automatic boot."""
+        # Script que faz boot automático quando o UEFI Shell inicia
+        nsh_content = """@echo -off
+FS0:
+\\EFI\\BOOT\\BOOTX64.EFI
+"""
+        dest = self.paths.dist_qemu / "startup.nsh"
+        dest.write_text(nsh_content, encoding="utf-8")
+        self.log.step("startup.nsh criado para boot automático")
     
     def clean(self) -> None:
         """Ensure distribution directory exists without wiping it (following anvil_old)."""

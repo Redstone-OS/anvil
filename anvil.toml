@@ -53,8 +53,12 @@ target = "x86_64-unknown-none"
 # ============================================================================
 
 [qemu]
-memory = "512M"
-ovmf = "assets/OVMF.fd"
+memory = "256M"
+ovmf = "/usr/share/qemu/OVMF.fd"
+serial = "stdio"
+monitor = "none"
+enable_gdb = false
+gdb_port = 1234
 extra_args = ["-no-reboot", "-no-shutdown", "-device", "VGA,vgamem_mb=16"]
 
 [qemu.logging]
