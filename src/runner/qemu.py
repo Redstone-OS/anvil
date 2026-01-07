@@ -45,11 +45,14 @@ class QemuRunner:
         # Base command with memory and bios
         cmd_parts = [
             "qemu-system-x86_64",
-            f"-m {cfg.memory}",
-            f"-drive if={cfg.drive_interface},file=fat:rw:'{dist_path}',format=raw",
+            f"-m 2048M",
+            f"-enable-kvm",
+            f"-cpu host",
+            f"-smp cpus=4",
+            f"-drive if={cfg.drive_interface},file=fat:rw:'{dist_path}',format=raw,if=virtio",
             f"-bios '{ovmf_path}'",
             f"-serial {cfg.serial}",
-            f"-monitor {cfg.monitor}",
+            f"-monitor none",
         ]
         
         # Logging flags
