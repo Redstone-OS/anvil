@@ -75,16 +75,6 @@ class Paths:
         base = base_path or (self.services / name)
         return base / "target" / "x86_64-unknown-none" / profile / name
 
-    # Arquivos de Log
-    @property
-    def serial_log(self) -> Path: return self.dist / "qemu-serial.log"
-    
-    @property
-    def cpu_log(self) -> Path: return self.dist / "qemu-internal.log"
-    
-    @property
-    def anvil_log_dir(self) -> Path: return self.anvil / "src" / "log"
-
     # UEFI / BIOS
     @property
     def ovmf(self) -> Path: return self.assets / "OVMF.fd"
