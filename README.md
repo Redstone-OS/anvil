@@ -1,103 +1,80 @@
-# Anvil Build System ⚒️
+# Anvil - Ferramenta de Build do RedstoneOS
 
-> **A Ferramenta de Forja do RedstoneOS**
+O **Anvil** é a ferramenta de automação de build e execução para o RedstoneOS. Ele foi projetado para simplificar o fluxo de desenvolvimento, gerenciando compilação, criação de imagens de disco e execução no emulador QEMU.
 
-Anvil é o sistema de build, orquestração e depuração oficial do RedstoneOS. Ele abstrai a complexidade de gerenciar múltiplos targets (Kernel, Bootloader, Userland), imagens de disco e execução no QEMU em uma interface unificada.
-
-<div align="center">
-  <pre>
-  ┌──────────────────────────────────────────────────┐
-  │  [1] Build All        [2] Run QEMU               │
-  │  [3] Clean            [4] Analyze Logs           │
-  └──────────────────────────────────────────────────┘
-  </pre>
-  <i>Interface TUI moderna e intuitiva</i>
-</div>
-
----
+Esta é a versão **v2 (Refatorada)**, focada em simplicidade, desempenho e remoção de dependências pesadas de UI.
 
 ## 🚀 Funcionalidades
 
-### 1. Sistema de Build Unificado
-Gerencia a compilação cruzada (Cross-Compilation) de todos os componentes do sistema operacional:
-- **Forge Kernel** (x86_64-redstone)
-- **Ignite Bootloader** (UEFI)
-- **Firefly Desktop** & Services (Userspace)
+- **Menu Interativo CLI**: Interface de texto simples e rápida.
+- **Build Modular**: Compila Kernel, Bootloader, Serviços e Apps individualmente ou em conjunto.
+- **Perfis de Build**:
+  - `Release`: Build padrão otimizada.
+  - `Release Limpo`: Remove tracers de debug do Kernel.
+  - `Otimizado`: Build de produção agressiva.
+- **Geração de Imagem**: Cria imagens `.vdi` (VirtualBox) e `.raw` prontas para boot.
+- **Integração WSL**: Executa comandos de sistema (dd, tar, qemu) via WSL 2 para compatibilidade total com ferramentas Linux.
+- **Monitoramento**:
+  - Execução do QEMU com captura de logs em tempo real.
+  - Colorização automática da saída serial.
+  - Detecção automática de **Crashes** (Page Faults, GP, etc).
 
-Tudo configurado via `anvil.toml`. O Anvil sabe exatamente quais flags `rustc`, `objcopy` e `ld` usar para cada componente.
+## 📋 Pré-requisitos
 
-### 2. TUI (Terminal User Interface)
-Uma interface rica e interativa para desenvolvedores:
-- Mostra logs de build em tempo real com coloração.
-- Monitora status de sucesso/falha de cada crate.
-- Permite rodar comandos comuns com um clique.
+- **Windows 10/11** com **WSL 2** instalado e configurado (Ubuntu/Debian recomendado).
+- **Python 3.10+**
+- **Rust / Cargo** (nightly para o RedstoneOS).
+- **QEMU** instalado no ambiente WSL (`qemu-system-x86_64`).
+- **Ferramentas de disco**: `mtools`, `dosfstools` no WSL.
 
-### 3. QEMU Wrapper & Debugging
-Esqueça as linhas de comando gigantes do QEMU. O Anvil gerencia:
-- BIOS/UEFI (OVMF).
-- Dispositivos Serial (COM1) para logging do kernel.
-- Redirecionamento de logs para análise.
+## 🛠️ Instalação
 
-### 4. Crash Analytics (Dr. Anvil) 🩺
-O Anvil monitora a saída serial do QEMU em busca de "Exception Dumps".
-Se o kernel der crash (Page Fault, #GPF, etc), o Anvil:
-1.  Detecta o vetor de interrompção.
-2.  Extrai o RIP (Instruction Pointer).
-3.  Usa `addr2line` para apontar **exatamente** qual linha de código Rust causou o crash.
-4.  Sugere soluções baseadas em padrões conhecidos (ex: "SSE in Kernel").
+1. Instale a dependência Python (apenas `toml` é necessário agora):
+   ```cmd
+   pip install -r requirements.txt
+   ```
 
----
+## ▶️ Como Usar
 
-## 🛠️ Como Usar
+Para iniciar o menu interativo:
 
-### Pré-requisitos
-- Python 3.10+
-- Rust Nightly (`rustup default nightly`)
-- QEMU (`qemu-system-x86_64` no PATH)
-- Bibliotecas Python: `pip install -r requirements.txt`
-
-### Executando
-
-**Modo Interativo (TUI):**
-```bash
-.\run.bat
-# ou
-python src/tui.py
+```cmd
+run.bat
 ```
 
-**Modo CLI (Automação/CI):**
-```bash
-python -m src.cli build kernel --release
-python -m src.cli run --headless
+Ou diretamente via Python:
+
+```cmd
+python src/main.py
 ```
 
----
+### Opções do Menu
 
-## ⚙️ Configuração (`anvil.toml`)
+- `[1] Release`: Compila tudo (Kernel + Bootloader + Userspace) e prepara a pasta `dist`.
+- `[2] Release Limpo`: Similar ao Release, mas compila o Kernel sem features de debug pesadas.
+- `[3] Release Otimizado`: Build com otimizações máximas (LTO, opt-level=3).
+- `[8] Gerar VDI`: Pack da pasta `dist` em uma imagem de disco VirtualBox.
+- `[9] QEMU`: Inicia o emulador. A saída serial será mostrada no terminal.
+- `[0] Monitor Serial`: Conecta-se ao pipe serial (útil se rodar VirtualBox separadamente).
 
-O coração do Anvil. Define onde estão os códigos fontes e como compilá-los.
+## 📂 Estrutura do Projeto
 
-```toml
-[components.kernel]
-path = "forge"
-target = "x86_64-redstone"
-
-[qemu]
-memory = "512M"
-ovmf = "assets/OVMF.fd"
 ```
-
-## 📁 Estrutura do Projeto
-
-```bash
 anvil/
-├── anvil.toml          # Configuração Global
-├── run.bat             # Launcher Windows
 ├── src/
-│   ├── build/          # Wrappers para Cargo/Rustc
-│   ├── runner/         # Gerenciamento do QEMU
-│   ├── analysis/       # Motor de Crash Analysis
-│   ├── tui/            # Interface Gráfica (Textual)
-│   └── cli.py          # Entry point de linha de comando
-└── assets/             # BIOS (OVMF) e ícones
+│   ├── build/        # Scripts de empacotamento (dist, initfs, image)
+│   ├── core/         # Configurações, logs e caminhos
+│   ├── runner/       # Gerenciamento do QEMU e Serial
+│   └── main.py       # Ponto de entrada da CLI
+├── requirements.txt  # Dependências (apenas toml)
+├── run.bat          # Launcher Windows
+└── anvil.toml       # Configuração global (na raiz do repositório)
 ```
+
+## 🔧 Configuração
+
+O comportamento do Anvil é controlado pelo arquivo `anvil.toml` na raiz do repositório `RedstoneOS`. Nele você pode ajustar:
+- Memória do QEMU.
+- Caminhos dos componentes.
+- Flags de debug do QEMU.
+- Configurações do Bootloader.

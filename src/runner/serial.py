@@ -1,102 +1,128 @@
-"""Anvil Runner - Serial output colorization and pipe listener."""
+"""Anvil Runner - Colorização de saída Serial.
 
-from __future__ import annotations
+Este módulo lida com a leitura de named pipes do Windows para capturar
+a saída serial do QEMU e aplicar cores para melhorar a legibilidade.
+Também remove caracteres de controle ANSI indesejados gerados pelo UEFI/Kernel.
+"""
 
 import asyncio
 import re
-from typing import Optional, Callable
 
-from core.logger import Logger, get_logger
-
+class Colors:
+    """Códigos de cor ANSI para o terminal."""
+    RESET = "\033[0m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    GREY = "\033[90m"
 
 class SerialColorizer:
-    """Colorize serial output and radical clean of UEFI/ANSI garbage."""
+    """Classe utilitária para colorir logs seriais brutos."""
     
-    # Remove qualquer código de controle ANSI [ ... ]
+    # Remove códigos ANSI complexos vindos do guest (ex: logs do EDK2)
     ANSI_CLEANER = re.compile(r"\x1b\[[0-9;?]*[A-Za-z=]")
     
-    TAG_PATTERNS = [
-        (r"\[OK\]", "[green][OK][/green]"),
-        (r"\[FAIL\]", "[bold red][FAIL][/bold red]"),
-        (r"\[ERROR\]", "[bold red][ERROR][/bold red]"),
-        (r"\[WARN\]", "[red][WARN][/red]"),
-        (r"\[TRACE\]", "[magenta][TRACE][/magenta]"),
-        (r"\[DEBUG\]", "[grey58][DEBUG][/grey58]"),
-        (r"\[INFO\]", "[cyan][INFO][/cyan]"),
-        (r"\[Supervisor\]", "[#ffa500][Supervisor][/#ffa500]"),
-        (r"\[Compositor\]", "[blue][Compositor][/blue]"),
-        (r"\[Shell\]", "[green][Shell][/green]"),
-        (r"\[Input\]", "[magenta][Input][/magenta]"),
-        (r"\[JUMP\]", "[magenta][JUMP][/magenta]"),
+    # Padrões de substituição: (Regex, Cor ANSI)
+    PATTERNS = [
+        (r"\[OK\]", f"{Colors.GREEN}[OK]{Colors.RESET}"),
+        (r"\[FAIL\]", f"{Colors.RED}[FAIL]{Colors.RESET}"),
+        (r"\[ERROR\]", f"{Colors.RED}[ERROR]{Colors.RESET}"),
+        (r"\[WARN\]", f"{Colors.RED}[WARN]{Colors.RESET}"),
+        (r"\[TRACE\]", f"{Colors.MAGENTA}[TRACE]{Colors.RESET}"),
+        (r"\[DEBUG\]", f"{Colors.GREY}[DEBUG]{Colors.RESET}"),
+        (r"\[INFO\]", f"{Colors.CYAN}[INFO]{Colors.RESET}"),
+        (r"\[Supervisor\]", f"{Colors.YELLOW}[Supervisor]{Colors.RESET}"),
+        (r"\[Compositor\]", f"{Colors.BLUE}[Compositor]{Colors.RESET}"),
+        (r"\[Shell\]", f"{Colors.GREEN}[Shell]{Colors.RESET}"),
+        (r"\[Input\]", f"{Colors.MAGENTA}[Input]{Colors.RESET}"),
     ]
-    
+
     @classmethod
     def colorize(cls, line: str) -> str:
-        # 1. Limpeza radical: remove códigos de escape
+        """Processa uma linha de texto, limpando e colorindo."""
+        
+        # 1. Limpeza: Remove códigos de escape existentes para evitar conflitos
         line = cls.ANSI_CLEANER.sub("", line)
         
-        # 2. Mantém apenas caracteres ASCII visíveis padrão e espaços
-        # Isso remove de vez os quadrados/lixo do UEFI
+        # 2. Filtragem: Mantém apenas caracteres ASCII imprimíveis, newline e return
+        # Isso remove lixo binário ou caracteres estranhos que aparecem no boot
         line = "".join(ch for ch in line if 32 <= ord(ch) <= 126 or ch == '\n' or ch == '\r')
         
         if not line.strip():
             return ""
 
-        # 3. Aplicar as cores do Anvil
-        for pattern, replacement in cls.TAG_PATTERNS:
+        # 3. Aplicação de padrões de tags (ex: [OK], [ERROR])
+        for pattern, replacement in cls.PATTERNS:
             line = re.sub(pattern, replacement, line)
         
-        line = re.sub(r"(?<!\[)'([^'\]]+)'(?!\[)", r"[green]'\1'[/green]", line)
-        line = re.sub(r"(?<!\[)\(([a-zA-Z0-9_ ]+)\)(?![\w\]])", r"[cyan](\1)[/cyan]", line)
-        line = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\(\)", r"[cyan]\1()[/cyan]", line)
-        line = re.sub(r"\b(0x[0-9a-fA-F]+)\b", r"[yellow]\1[/yellow]", line)
-        line = re.sub(r"(?<![a-zA-Z#\[])\b(\d+(?:\.\d+)?)\b(?![a-zA-Z])", r"[yellow]\1[/yellow]", line)
+        # 4. Realces sintáticos simples
+        
+        # 'texto entre aspas' -> verde
+        line = re.sub(r"(?<!\[)'([^'\]]+)'(?!\[)", f"{Colors.GREEN}'\\1'{Colors.RESET}", line)
+        
+        # (texto em parenteses) -> ciano
+        line = re.sub(r"(?<!\[)\(([a-zA-Z0-9_ ]+)\)(?![\w\]])", f"{Colors.CYAN}(\\1){Colors.RESET}", line)
+        
+        # funcao() -> ciano
+        line = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\(\)", f"{Colors.CYAN}\\1(){Colors.RESET}", line)
+        
+        # 0xHEX -> amarelo
+        line = re.sub(r"\b(0x[0-9a-fA-F]+)\b", f"{Colors.YELLOW}\\1{Colors.RESET}", line)
+        
+        # números -> amarelo
+        line = re.sub(r"(?<![a-zA-Z#\[])\b(\d+(?:\.\d+)?)\b(?![a-zA-Z])", f"{Colors.YELLOW}\\1{Colors.RESET}", line)
         
         return line
 
-
 class PipeListener:
-    """Listen for serial output via Windows Named Pipe asynchronously."""
+    """Ouve a saída serial através de um Named Pipe do Windows (usado pelo QEMU/VirtBox)."""
     
-    def __init__(
-        self,
-        pipe_path: str = r"\\.\pipe\VBoxCom1",
-        log: Optional[Logger] = None,
-        on_line: Optional[Callable[[str], None]] = None,
-    ):
+    def __init__(self, pipe_path=r"\\.\pipe\VBoxCom1", on_line=None):
         self.pipe_path = pipe_path
-        self.log = log or get_logger()
         self.on_line = on_line
         self._stop_event = asyncio.Event()
         self._buffer = ""
-    
-    async def start(self) -> None:
+
+    async def start(self):
+        """Inicia a escuta em background."""
         asyncio.create_task(self._run_loop())
 
-    async def _run_loop(self) -> None:
+    async def _run_loop(self):
+        """Loop principal que tenta conectar ao pipe."""
         while not self._stop_event.is_set():
             try:
+                # Executa a leitura bloqueante em um executor para não travar o async
                 await asyncio.get_event_loop().run_in_executor(None, self._read_pipe)
             except Exception:
+                # Se falhar (pipe não existe ainda), espera um pouco e tenta de novo
                 await asyncio.sleep(1)
-    
-    def _read_pipe(self) -> None:
+
+    def _read_pipe(self):
+        """Lê do pipe de forma síncrona."""
         try:
             with open(self.pipe_path, "rb") as f:
-                self.log.success("Status: CONECTADO")
+                print(f"{Colors.GREEN}Serial Conectado{Colors.RESET}")
                 while not self._stop_event.is_set():
                     chunk = f.read(1024)
                     if not chunk: break
+                    
                     text = chunk.decode("utf-8", errors="replace")
                     self._buffer += text
+                    
+                    # Processa linha por linha
                     if "\n" in self._buffer:
                         lines = self._buffer.split("\n")
-                        self._buffer = lines.pop()
+                        self._buffer = lines.pop() # Guarda o resto que não formou linha completa
+                        
                         for line in lines:
                             out = SerialColorizer.colorize(line)
                             if out and self.on_line: self.on_line(out)
         except Exception:
             pass
-    
-    def stop(self) -> None:
+
+    def stop(self):
+        """Para a escuta."""
         self._stop_event.set()

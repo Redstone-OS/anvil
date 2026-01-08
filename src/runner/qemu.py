@@ -1,122 +1,127 @@
-"""Anvil Runner - QEMU configuration and launcher."""
+"""Anvil Runner - QEMU Launcher.
 
-from __future__ import annotations
+Responsável por montar o comando e executar o QEMU via WSL,
+seguindo EXATAMENTE os padrões definidos pelo usuário (script boot_redstone.sh).
+"""
 
 import asyncio
-from dataclasses import dataclass, field
 from typing import Optional
-
 from core.config import Config, QemuConfig
 from core.paths import Paths
 from core.logger import Logger, get_logger
 
-
 class QemuRunner:
-    """
-    QEMU process manager.
+    """Gerenciador de processo QEMU."""
     
-    Launches QEMU via WSL following the anvil_old pattern.
-    """
-    
-    def __init__(
-        self,
-        paths: Paths,
-        config: Config,
-        log: Optional[Logger] = None,
-    ):
+    def __init__(self, paths: Paths, config: Config, log: Optional[Logger] = None):
         self.paths = paths
         self.config = config
         self.log = log or get_logger()
-        self.process: Optional[asyncio.subprocess.Process] = None
-
-    def build_command(self, override_config: Optional[QemuConfig] = None) -> str:
-        """Build the QEMU command line for WSL."""
-        cfg = override_config or self.config.qemu
+        self.process = None
         
+    def build_command(self, override_config: Optional[QemuConfig] = None) -> str:
+        """
+        Constrói a linha de comando do QEMU para execução no WSL.
+        Baseado no script de referência 'boot_redstone.sh'.
+        """
+        cfg = override_config or self.config.qemu
         dist_path = Paths.to_wsl(self.paths.dist_qemu)
         internal_log = Paths.to_wsl(self.paths.cpu_log)
-        serial_log = Paths.to_wsl(self.paths.serial_log)
         
-        # Resolve OVMF path (if relative, it's relative to project root)
+        # O OVMF é essencial para boot UEFI
+        # Se o caminho configurado for relativo, resolve a partir da raiz do projeto
+        # Se for absoluto (ex: /usr/share/...), mantém como está
         ovmf_path = cfg.ovmf
         if not ovmf_path.startswith("/"):
             ovmf_path = Paths.to_wsl(self.config.project_root / ovmf_path)
-
-        # Base command with memory and bios
+            
+        # Montagem dos argumentos, ordem baseada no pedido do usuário
         cmd_parts = [
             "qemu-system-x86_64",
-            f"-m 2048M",
-            f"-enable-kvm",
-            f"-cpu host",
-            f"-smp cpus=4",
-            f"-drive if={cfg.drive_interface},file=fat:rw:'{dist_path}',format=raw,if=virtio",
+            "-enable-kvm",
+            "-cpu host",
+            "-m 2048M",           # Fixo conforme pedido, ou usar cfg.memory se quiser flexibilidade
+            "-smp cpus=4",
+            
+            # Disco principal: pasta mapeada como disco FAT
+            f"-drive file=fat:rw:'{dist_path}',format=raw,if=virtio",
+            
+            # Firmware UEFI
             f"-bios '{ovmf_path}'",
-            f"-serial {cfg.serial}",
-            f"-monitor none",
+            
+            # Serial stdio para capturarmos via pipe
+            "-serial stdio",
+            
+            "-monitor none",
+            "-no-reboot"
         ]
         
-        # Logging flags
-        flags = cfg.debug_flags or cfg.logging.flags
+        # Flags de debug (-d ...)
+        # O usuário usa: -d cpu_reset,int,mmu,guest_errors,unimp
+        flags = cfg.debug_flags or ["cpu_reset", "int", "mmu", "guest_errors", "unimp"]
         if flags:
             cmd_parts.append(f"-d {','.join(flags)}")
         
-        # Log file interno (CPU)
+        # Log interno do QEMU (-D ...)
         cmd_parts.append(f"-D '{internal_log}'")
         
-        # GDB
+        # GDB (opcional, mantido para funcionalidade da ferramenta)
         if cfg.enable_gdb:
             cmd_parts.append(f"-s -S -p {cfg.gdb_port}")
         
-        # Args extras (including those in anvil.toml like VGA, no-reboot, etc)
+        # Argumentos extras (GPU, etc) definidos no TOML
         extra = cfg.extra_args
-        
-        # SAFETY FALLBACK: If for some reason extra_args is empty or missing virtio, force it
+        # Garante virtio-gpu se não existir, pois o usuário usa 'if=virtio' no drive mas gpu é device separado
+        # O script do usuário não mostra gpu explicito, mas RedstoneOS geralmente precisa.
+        # Vou manter a lógica segura: se não tiver no extra, adiciona.
         if not any("virtio-gpu" in str(a) for a in extra):
             if "-device" not in extra:
-                extra.extend(["-device", "virtio-gpu-pci"])
-        
+                cmd_parts.append("-device virtio-gpu-pci")
+            
         for arg in extra:
-            if arg not in cmd_parts:
+            # Evita duplicar se já adicionamos manualmente
+            if arg not in cmd_parts and arg != "-no-reboot": 
                 cmd_parts.append(arg)
-        
-        # Final redirect for serial log
-        # Note: tee must be the LAST part of the constructed shell string
+            
+        # IMPORTANTE: Redireciona stderr para stdout (2>&1)
+        # Não usaremos 'tee' nem 'perl' aqui dentro. 
+        # O Python captura o stdout limpo, e salva o log tratado (sem cores) via classe QemuMonitor.
         full_cmd = " ".join(cmd_parts)
-        full_cmd += f" 2>&1 | tee '{serial_log}'"
+        full_cmd += " 2>&1"
         
         return full_cmd
-    
-    async def start(
-        self,
-        override_config: Optional[QemuConfig] = None,
-    ) -> asyncio.subprocess.Process:
-        """Start QEMU via WSL."""
-        self.log.info("🚀 Iniciando QEMU via WSL...")
+        
+    async def start(self, override_config: Optional[QemuConfig] = None):
+        """Inicia o processo QEMU."""
+        self.log.info("Inicializando QEMU via WSL...")
+        
+        # Define LANG para evitar problemas de caractere no perl/bash se fosse usado
+        # Mas útil para garantir utf-8 no qemu
+        env_vars = "export LANG=en_US.UTF-8 &&"
         
         cmd = self.build_command(override_config)
-        self.log.info(f"Comando QEMU: {cmd}")
+        self.log.debug(f"Comando: {cmd}")
         
-        # Garantir logs limpos
+        # Limpa logs anteriores
         self.paths.cpu_log.parent.mkdir(parents=True, exist_ok=True)
         self.paths.cpu_log.write_text("")
         self.paths.serial_log.write_text("")
         
-        # O cd /tmp && {cmd} do anvil_old ajuda na estabilidade
+        # Executa via WSL bash
+        # cd /tmp é mantido por estabilidade de lock
         self.process = await asyncio.create_subprocess_exec(
-            "wsl", "bash", "-c", f"cd /tmp && {cmd}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            "wsl", "bash", "-c", f"{env_vars} cd /tmp && {cmd}",
+            stdout=asyncio.subprocess.PIPE, 
+            stderr=asyncio.subprocess.STDOUT
         )
-        
-        self.log.success(f"QEMU iniciado (PID: {self.process.pid})")
+        self.log.success(f"QEMU rodando (PID: {self.process.pid})")
         return self.process
-    
-    async def stop(self) -> None:
+        
+    async def stop(self):
+        """Para o QEMU."""
         if self.process:
-            self.log.info("⏹️ Parando QEMU...")
+            self.log.info("Parando QEMU...")
             self.process.terminate()
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                self.process.kill()
+            try: await asyncio.wait_for(self.process.wait(), timeout=5.0)
+            except: self.process.kill()
             self.process = None

@@ -1,6 +1,10 @@
-"""Anvil Build - InitRAMFS creation and services deployment."""
+"""Anvil Build - Gerador de InitRAMFS.
 
-from __future__ import annotations
+Responsável por:
+1. Criar o arquivo initfs (TAR) contendo o Supervisor.
+2. Copiar serviços e apps para as pastas apropriadas no 'disco' (dist/qemu).
+3. Gerar manifestos de serviços.
+"""
 
 import asyncio
 import shutil
@@ -13,234 +17,148 @@ from core.paths import Paths
 from core.errors import BuildError
 from core.logger import Logger, get_logger
 
-
 @dataclass
 class InitramfsEntry:
-    """Entry in the initramfs."""
     source: Path
-    dest: str  # Path inside initramfs
+    dest: str
     size: int = 0
 
-
 class InitramfsBuilder:
-    """
-    Builder for the kernel's InitRAMFS and services deployment.
+    INITFS_DIRECTORIES = ["system/core"]
     
-    InitRAMFS (boot/initfs) - Minimal bootstrap:
-    /system/
-    └── core/
-        └── supervisor   # PID 1 only!
-    
-    dist/qemu/system/services/ - Full services:
-    ├── firefly
-    └── shell
-    """
-    
-    # Minimal initfs structure (just for supervisor)
-    INITFS_DIRECTORIES = [
-        "system/core",
-    ]
-    
-    def __init__(
-        self,
-        paths: Paths,
-        config: Config,
-        log: Optional[Logger] = None,
-    ):
+    def __init__(self, paths: Paths, config: Config, log: Optional[Logger] = None):
         self.paths = paths
         self.config = config
         self.log = log or get_logger()
-        self.entries: list[InitramfsEntry] = []
-    
+        self.entries = []
+        
     async def build(self, profile: str = "release") -> bool:
-        """Build the initramfs and deploy services."""
-        self.log.header("Building InitRAMFS + Services")
+        """Executa processo de build do initramfs e deploy de componentes."""
+        self.log.header("Construindo InitRAMFS e Serviços")
         
-        # Clean staging directory
         self._clean_staging()
-        
-        # Create minimal initfs structure
         self._create_initfs_structure()
         
-        # Add ONLY supervisor to initfs
+        # O Supervisor é o único binário que VAI DENTRO do initfs (boot)
         supervisor_path = self.paths.service_binary("supervisor", profile)
         if not self._add_to_initfs("supervisor", supervisor_path):
-            raise BuildError("Supervisor service is required", "initramfs")
-        
-        # Create initfs TAR
+            raise BuildError("Supervisor é necessário", "initramfs")
+            
+        # Cria o pacote TAR do initfs
         output = self.paths.dist_qemu / "boot" / "initfs"
         output.parent.mkdir(parents=True, exist_ok=True)
-        tar_size = await self._create_tar(output)
+        if await self._create_tar(output) is None: return False
         
-        if tar_size is None:
-            return False
-        
-        # Deploy other services to dist/qemu/system/services/
+        # Outros serviços e apps vão para o sistema de arquivos normal (/system/services)
         await self._deploy_services(profile)
-        
-        # Deploy apps to dist/qemu/apps/system/
         await self._deploy_apps(profile)
-        
-        # Create manifest
         self._create_manifest()
         
         return True
-    
-    def _clean_staging(self) -> None:
-        """Clean the initramfs staging directory."""
-        if self.paths.initramfs.exists():
-            shutil.rmtree(self.paths.initramfs)
+        
+    def _clean_staging(self):
+        """Limpa diretório temporário do initramfs."""
+        if self.paths.initramfs.exists(): shutil.rmtree(self.paths.initramfs)
         self.paths.initramfs.mkdir(parents=True, exist_ok=True)
-    
-    def _create_initfs_structure(self) -> None:
-        """Create minimal initfs directory structure (supervisor only)."""
-        self.log.info("📂 Creating minimal initfs structure...")
         
+    def _create_initfs_structure(self):
+        """Cria pastas básicas."""
+        self.log.info("Criando estrutura mínima do initfs...")
         for dir_path in self.INITFS_DIRECTORIES:
-            full_path = self.paths.initramfs / dir_path
-            full_path.mkdir(parents=True, exist_ok=True)
-        
-        self.log.step("Structure: /system/core (supervisor only)")
-    
+            (self.paths.initramfs / dir_path).mkdir(parents=True, exist_ok=True)
+            
     def _add_to_initfs(self, name: str, source: Path) -> bool:
-        """Add a binary to the initfs (only for supervisor)."""
+        """Adiciona arquivo ao staging do initramfs."""
         if not source.exists():
-            self.log.error(f"Service '{name}' not found: {source}")
+            self.log.error(f"Serviço '{name}' não encontrado: {source}")
             return False
-        
         dest = f"system/core/{name}"
         dest_path = self.paths.initramfs / dest
         shutil.copy2(source, dest_path)
-        
-        self.entries.append(InitramfsEntry(
-            source=source,
-            dest=dest,
-            size=source.stat().st_size,
-        ))
-        
-        self.log.step(f"initfs: /{dest} ({source.stat().st_size:,} bytes)")
+        self.log.step(f"initfs: /{dest}")
         return True
-    
-    async def _deploy_services(self, profile: str) -> None:
-        """Deploy all non-supervisor services to dist/qemu/system/services/."""
-        self.log.info("📦 Deploying services...")
         
+    async def _deploy_services(self, profile: str):
+        """Copia serviços para dist/qemu/system/services."""
+        self.log.info("Implantando serviços...")
         services_dir = self.paths.dist_qemu / "system" / "services"
         services_dir.mkdir(parents=True, exist_ok=True)
         
-        deployed = 0
         for svc in self.config.components.services:
-            # Skip supervisor (it's in initfs)
-            if svc.name == "supervisor":
-                continue
+            if svc.name == "supervisor": continue # Já foi pro initfs
             
-            svc_path = self.paths.service_binary(
-                svc.name,
-                profile,
-                base_path=self.paths.root / svc.path,
-            )
+            svc_path = self.paths.service_binary(svc.name, profile, base_path=self.paths.root / svc.path)
             
             if not svc_path.exists():
-                self.log.warning(f"Service '{svc.name}' not found: {svc_path}")
+                self.log.warning(f"Serviço '{svc.name}' não achado")
                 continue
-            
-            # New structure: /system/services/{name}/{name}.app
+                
+            # Estrutura: nome_servico/nome_servico.app
             dest_dir = services_dir / svc.name
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / f"{svc.name}.app"
+            shutil.copy2(svc_path, dest_dir / f"{svc.name}.app")
+            self.log.step(f"Deploy: {svc.name}")
             
-            shutil.copy2(svc_path, dest)
-            deployed += 1
-            
-            self.log.step(f"/system/services/{svc.name}/{svc.name}.app ({svc_path.stat().st_size:,} bytes)")
-        
-        self.log.success(f"Deployed {deployed} services")
-    
-    async def _deploy_apps(self, profile: str) -> None:
-        """Deploy all apps to dist/qemu/apps/system/."""
-        self.log.info("📦 Deploying apps...")
-        
+    async def _deploy_apps(self, profile: str):
+        """Copia apps para dist/qemu/apps/system."""
+        self.log.info("Implantando apps...")
         apps_dir = self.paths.dist_qemu / "apps" / "system"
         apps_dir.mkdir(parents=True, exist_ok=True)
         
-        deployed = 0
         for app in self.config.components.apps:
-            app_path = self.paths.service_binary(
-                app.name,
-                profile,
-                base_path=self.paths.root / app.path,
-            )
+            app_path = self.paths.service_binary(app.name, profile, base_path=self.paths.root / app.path)
             
             if not app_path.exists():
-                self.log.warning(f"App '{app.name}' not found: {app_path}")
+                self.log.warning(f"App '{app.name}' não achado")
                 continue
-            
-            # New structure: /apps/system/{name}/{name}.app
+                
             dest_dir = apps_dir / app.name
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / f"{app.name}.app"
+            shutil.copy2(app_path, dest_dir / f"{app.name}.app")
+            self.log.step(f"Deploy: {app.name}")
             
-            shutil.copy2(app_path, dest)
-            deployed += 1
-            
-            self.log.step(f"/apps/system/{app.name}/{app.name}.app ({app_path.stat().st_size:,} bytes)")
-        
-        self.log.success(f"Deployed {deployed} apps")
-    
-    def _create_manifest(self) -> None:
-        """Create services manifest."""
+    def _create_manifest(self):
+        """Gera arquivo services.toml listando serviços para o Supervisor."""
         manifests_dir = self.paths.dist_qemu / "system" / "manifests" / "services"
         manifests_dir.mkdir(parents=True, exist_ok=True)
         
-        manifest_path = manifests_dir / "services.toml"
-        
-        lines = [
-            "# RedstoneOS Services Manifest",
-            "# /system/manifests/services.toml",
-            "",
-        ]
-        
+        lines = ["# RedstoneOS Services Manifest", ""]
         for svc in self.config.components.services:
-            if svc.name == "supervisor":
-                continue
+            if svc.name == "supervisor": continue
             
             lines.extend([
-                f"[[service]]",
+                "[[service]]",
                 f'name = "{svc.name}"',
                 f'path = "/system/services/{svc.name}/{svc.name}.app"',
-                f'restart = "always"',
-                "",
+                'restart = "always"',
+                ""
             ])
-        
-        manifest_path.write_text("\n".join(lines), encoding="utf-8")
-        self.log.step("/system/manifests/services.toml created")
-    
+            
+        (manifests_dir / "services.toml").write_text("\n".join(lines), encoding="utf-8")
+        self.log.step("Manifesto de serviços criado")
+
     async def _create_tar(self, output: Path) -> Optional[int]:
-        """Create TAR archive via WSL."""
-        self.log.info("📦 Creating initfs archive (supervisor only)...")
+        """Usa 'tar' via WSL para criar o arquivo initfs com permissões corretas."""
+        self.log.info("Criando arquivo TAR initfs...")
         
-        wsl_initramfs = Paths.to_wsl(self.paths.initramfs)
-        wsl_output = Paths.to_wsl(output)
+        wsl_init = Paths.to_wsl(self.paths.initramfs)
+        wsl_out = Paths.to_wsl(output)
         
-        cmd = f"tar -cf '{wsl_output}' -C '{wsl_initramfs}' ."
+        # -C muda o diretório antes de compactar, '.' pega tudo
+        cmd = f"tar -cf '{wsl_out}' -C '{wsl_init}' ."
         
         try:
-            process = await asyncio.create_subprocess_exec(
+            p = await asyncio.create_subprocess_exec(
                 "wsl", "bash", "-c", cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
+            _, err = await p.communicate()
             
-            _, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                self.log.error(f"TAR creation failed: {stderr.decode()}")
+            if p.returncode != 0:
+                self.log.error(f"Erro no TAR: {err.decode()}")
                 return None
-            
-            size = output.stat().st_size
-            self.log.success(f"initfs created ({size / 1024:.2f} KB)")
-            return size
-        
-        except FileNotFoundError:
-            self.log.error("WSL not available")
+                
+            return output.stat().st_size
+        except Exception as e:
+            self.log.error(f"Erro ao chamar WSL: {e}")
             return None
