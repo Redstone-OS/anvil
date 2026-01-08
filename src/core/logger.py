@@ -76,7 +76,7 @@ class Logger:
 
     def raw(self, message):
         """Imprime a mensagem exatamente como recebida, sem formatação extra."""
-        print(message)
+        print(message, flush=True)
 
 # Instância global do logger
 _logger = None

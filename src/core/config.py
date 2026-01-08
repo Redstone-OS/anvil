@@ -35,7 +35,6 @@ class QemuLogging:
     """Configuração de flags de log do QEMU (-d ...)."""
     flags: list[str] = field(default_factory=lambda: ["cpu_reset", "int", "mmu", "guest_errors", "unimp"])
     serial_file: str = "../dist/qemu-serial.log"
-    internal_file: str = "../dist/qemu-internal.log"
 
 @dataclass
 class QemuConfig:

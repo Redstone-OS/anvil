@@ -49,25 +49,6 @@ path = "firefly/apps/index"
 target = "x86_64-unknown-none"
 
 # ============================================================================
-# QEMU
-# ============================================================================
-
-[qemu]
-memory = "512M"
-ovmf = "/usr/share/qemu/OVMF.fd"
-serial = "stdio"
-monitor = "none"
-drive_interface = "virtio"
-enable_gdb = false
-gdb_port = 1234
-extra_args = ["-no-reboot", "-no-shutdown", "-device", "virtio-gpu-pci"]
-
-[qemu.logging]
-flags = ["cpu_reset", "guest_errors", "unimp"]
-serial_file = "../dist/qemu-serial.log"
-internal_file = "../dist/qemu-internal.log"
-
-# ============================================================================
 # Análise
 # ============================================================================
 

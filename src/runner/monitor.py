@@ -68,11 +68,20 @@ class QemuMonitor:
     def _on_entry(self, entry):
         """Callback chamado para cada nova linha de log."""
         
-        # Mostra serial no terminal se configurado
+        # O StreamCapture lê tudo do stdout do QEMU como "SERIAL".
+        # Porém, como usamos '2>&1', logs de debug do QEMU (-d int,cpu...) também vêm por aqui.
+        # Precisamos filtrar para mostrar APENAS o que parece ser serial do SO (ANSI color formatado ou texto limpo)
+        # Logs de CPU geralmente começam com códigos hex ou abreviações específicas (EAX=, Servicing, etc)
+        # O User quer apenas o que o SerialColorizer processa ou o que foi limpo.
+        
         if self.show_serial and entry.source == StreamSource.SERIAL:
-            self.log.raw(SerialColorizer.colorize(entry.line))
-            
-        # Rastreia RIP para contexto de crash
+            # O output agora deve vir limpo do QEMU/WSL (Debug -> /dev/null)
+            # Apenas aplicamos cores
+            colored = SerialColorizer.colorize(entry.line)
+            if colored.strip():
+                self.log.raw(colored)
+
+        # Rastreia RIP para contexto de crash (fallback se passou pelo filtro visual)
         if entry.line.startswith("RIP="): self._last_rip = entry.line.split()[0]
         
         # Verifica se é uma exceção
@@ -123,7 +132,9 @@ class QemuMonitor:
             
             # Tasks para capturar output
             serial_task = asyncio.create_task(self.capture.capture_serial(process.stdout))
-            cpu_task = asyncio.create_task(self.capture.capture_cpu_log(self.paths.cpu_log))
+            # CPU Log removido a pedido
+            # cpu_task = asyncio.create_task(self.capture.capture_cpu_log(self.paths.cpu_log))
+            
             exit_task = asyncio.create_task(process.wait())
             
             # Loop de monitoramento
@@ -143,10 +154,11 @@ class QemuMonitor:
                 await asyncio.sleep(0.1)
                 
             self.capture.stop()
-            try: await serial_task; await cpu_task
+            try: await serial_task
             except: pass
             
-            self._save_logs()
+            # Logs já são salvos pelo comando bash (tee -> file)
+            # self._save_logs()
             
             return MonitorResult(
                 success=not self._crash_info, 

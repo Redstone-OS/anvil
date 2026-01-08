@@ -54,6 +54,11 @@ class SerialColorizer:
         if not line.strip():
             return ""
 
+        # FILTRO EXPLICITO DE CPU LOGS
+        # Remove linhas que parecem dump de registradores ou interrupções do QEMU
+        if "RAX=" in line or "EAX=" in line or "CR3=" in line or "Servicing" in line:
+            return ""
+
         # 3. Aplicação de padrões de tags (ex: [OK], [ERROR])
         for pattern, replacement in cls.PATTERNS:
             line = re.sub(pattern, replacement, line)

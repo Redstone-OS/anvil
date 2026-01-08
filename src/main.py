@@ -149,10 +149,10 @@ class AnvilCLI:
         logger.header("Inicializando QEMU")
         try:
             cfg = QemuConfig(memory=self.config.qemu.memory, debug_flags=self.config.qemu.logging.flags, enable_gdb=gdb)
-            monitor = QemuMonitor(self.paths, self.config, stop_on_exception=True, show_serial=False)
+            monitor = QemuMonitor(self.paths, self.config, stop_on_exception=True, show_serial=True)
             
-            # Callback para imprimir linhas seriais coloridas
-            monitor.capture.add_callback(lambda e: print(SerialColorizer.colorize(e.line), end="") if e.source == StreamSource.SERIAL else None)
+            # Callback para imprimir linhas seriais coloridas foi removido pois show_serial=True já faz isso
+            # via logger.raw() que agora tem flush=True
             
             result = await monitor.run_monitored(cfg)
             if result.crashed: logger.error(f"CRASH Detectado: {result.crash_info}")
