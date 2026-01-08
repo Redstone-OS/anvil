@@ -31,11 +31,6 @@ class BootloaderConfig:
     default_profile: str = "release"
 
 @dataclass
-class QemuLogging:
-    """Configuração de flags de log do QEMU (-d ...)."""
-    flags: list[str] = field(default_factory=lambda: ["cpu_reset", "int", "mmu", "guest_errors", "unimp"])
-
-@dataclass
 class AnalysisPattern:
     """Padrão de erro para análise automática de logs."""
     name: str
@@ -73,7 +68,7 @@ class Config:
     project_name: str = "RedstoneOS"
     project_root: Path = field(default_factory=Path)
     components: ComponentsConfig = field(default_factory=ComponentsConfig)
-    qemu: QemuConfig = field(default_factory=QemuConfig)
+    qemu: Any = field(default=None)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     
     @classmethod
@@ -93,9 +88,6 @@ class Config:
         components = ComponentsConfig(kernel=kernel, bootloader=bootloader, services=services, apps=apps)
         
         qemu_data = data.get("qemu", {}).copy()
-        logging_data = qemu_data.pop("logging", {})
-        qemu_logging = QemuLogging(**logging_data)
-        qemu = QemuConfig(**qemu_data, logging=qemu_logging)
         
         analysis_data = data.get("analysis", {}).copy()
         patterns = [AnalysisPattern(**p) for p in analysis_data.pop("patterns", [])]
@@ -105,7 +97,7 @@ class Config:
             project_name=project_data.get("name", "RedstoneOS"),
             project_root=project_root,
             components=components,
-            qemu=qemu,
+            qemu=None, # QEMU config removida/hardcoded
             analysis=analysis,
         )
 

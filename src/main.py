@@ -17,7 +17,6 @@ from build.initramfs import InitramfsBuilder
 from build.image import ImageBuilder
 
 from runner.monitor import QemuMonitor
-from runner.qemu import QemuConfig
 from runner.serial import PipeListener, SerialColorizer
 from runner.streams import StreamSource
 
@@ -146,15 +145,21 @@ class AnvilCLI:
 
     async def run_qemu(self, gdb=False):
         """Inicia QEMU com monitoramento."""
+        # Verificação rápida se existe algo bootável
+        boot_efi = self.paths.dist_qemu / "EFI" / "BOOT" / "BOOTX64.EFI"
+        if not boot_efi.exists():
+            logger.warning("Bootloader não encontrado! Você rodou a opção [1] Release?")
+            if input("Continuar mesmo assim? (s/N) > ").lower() != "s": return
+
         logger.header("Inicializando QEMU")
         try:
-            cfg = QemuConfig(memory=self.config.qemu.memory, debug_flags=self.config.qemu.logging.flags, enable_gdb=gdb)
+            # cfg = QemuConfig(...) -> Removido pois config agora é hardcoded no runner
             monitor = QemuMonitor(self.paths, self.config, stop_on_exception=True, show_serial=True)
             
             # Callback para imprimir linhas seriais coloridas foi removido pois show_serial=True já faz isso
             # via logger.raw() que agora tem flush=True
             
-            result = await monitor.run_monitored(cfg)
+            result = await monitor.run_monitored()
             if result.crashed: logger.error(f"CRASH Detectado: {result.crash_info}")
         finally: logger.header("QEMU Finalizado")
 
@@ -260,7 +265,8 @@ class AnvilCLI:
 
 def clear_screen():
     """Limpa a tela do terminal."""
-    print("\033[2J\033[H", end="")
+    import os
+    os.system('cls' if os.name == 'nt' else 'clear')
 
 async def main():
     """Loop principal do menu."""

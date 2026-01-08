@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Callable
 
-from core.config import Config, QemuConfig
+from core.config import Config
 from core.paths import Paths
 from core.logger import Logger, get_logger
 from runner.qemu import QemuRunner
@@ -115,7 +115,7 @@ class QemuMonitor:
                 )
         return None
         
-    async def run_monitored(self, qemu_config=None, timeout=None):
+    async def run_monitored(self, timeout=None):
         """Executa o QEMU monitorando logs e serial."""
         start = time.time()
         self._crash_info = None
@@ -127,7 +127,7 @@ class QemuMonitor:
         self.capture.add_callback(self._on_entry)
         
         try:
-            process = await self.runner.start(qemu_config)
+            process = await self.runner.start()
             if not process.stdout: return MonitorResult(False, 0, True)
             
             # Tasks para capturar output

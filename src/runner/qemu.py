@@ -6,7 +6,7 @@ seguindo EXATAMENTE os padrões definidos pelo usuário (hardcoded).
 
 import asyncio
 from typing import Optional
-from core.config import Config, QemuConfig
+from core.config import Config
 from core.paths import Paths
 from core.logger import Logger, get_logger
 
@@ -19,7 +19,7 @@ class QemuRunner:
         self.log = log or get_logger()
         self.process = None
         
-    def build_command(self, override_config: Optional[QemuConfig] = None) -> str:
+    def build_command(self) -> str:
         """
         Constrói a linha de comando do QEMU para execução no WSL.
         Hardcoded para garantir fidelidade total ao pedido do usuário.
@@ -32,11 +32,12 @@ class QemuRunner:
             "-cpu host",
             "-m 2048M",
             "-smp cpus=4",
-            f"-drive file=fat:rw:'',format=raw,if=virtio",
-            f"-bios '{'",
+            "-drive file=fat:rw:/mnt/d/Github/RedstoneOS/dist/qemu,format=raw,if=virtio",
+            "-bios /usr/share/qemu/OVMF.fd",
             "-serial stdio",
             "-monitor none",
-            "-no-reboot"
+            "-no-reboot",
+            "-device virtio-gpu-pci,xres=1366,yres=768"
         ]
 
         # Pipeline Tee/Perl para o log serial (mantido pois usuário confirmou que usa isso)
@@ -48,12 +49,12 @@ class QemuRunner:
         
         return full_cmd
         
-    async def start(self, override_config: Optional[QemuConfig] = None):
+    async def start(self):
         """Inicia o processo QEMU."""
         self.log.info("Inicializando QEMU via WSL...")
         
         env_vars = "export LANG=en_US.UTF-8 &&"
-        cmd = self.build_command(override_config)
+        cmd = self.build_command()
         self.log.debug(f"Comando: {cmd}")
         
         # Limpa apenas log serial
