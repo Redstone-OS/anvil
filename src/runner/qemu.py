@@ -21,28 +21,34 @@ class QemuRunner:
         
     def build_command(self) -> str:
         """
-        Constrói a linha de comando do QEMU para execução no WSL.
-        Hardcoded para garantir fidelidade total ao pedido do usuário.
+        Constrói o comando QEMU idêntico ao boot_redstone.sh.
+        Fidelidade total ao script do usuário.
         """
+        base_dir = "/mnt/d/Github/RedstoneOS/dist"
+        qemu_dir = f"{base_dir}/qemu"
+        internal_log = f"{base_dir}/qemu-internal.log"
+        serial_log = f"{base_dir}/qemu-serial.log"
 
-        
-        # Lista HARDCODED sem lógica extra
         cmd_parts = [
             "qemu-system-x86_64",
             "-enable-kvm",
             "-cpu host",
             "-m 2048M",
-            "-smp cpus=4,sockets=1,cores=2,threads=2",
-            '-drive "file=fat:rw:/mnt/d/Github/RedstoneOS/dist/qemu,format=raw"',
+            "-smp cpus=4",
+            f'-drive file=fat:rw:"{qemu_dir}",format=raw,if=virtio',
             "-bios /usr/share/qemu/OVMF.fd",
-            "-chardev stdio,id=char0,mux=on,logfile=/mnt/d/Github/RedstoneOS/dist/serial.log",
-            "-serial chardev:char0",
-            "-vga std",
-            "-s"
+            "-serial stdio",
+            "-monitor none",
+            "-no-reboot",
+            "-d cpu_reset,int,mmu,guest_errors,unimp",
+            f"-D {internal_log}"
         ]
 
+        full_cmd = " ".join(cmd_parts)
+        # O Anvil agora usa o mesmo limpador Perl do seu script para o arquivo de log
+        full_cmd += f" | tee >(perl -pe 's/\\e\\[?.*?[\\@-~]//g' >{serial_log})"
         
-        return " ".join(cmd_parts)
+        return full_cmd
         
     async def start(self):
         """Inicia o processo QEMU."""
