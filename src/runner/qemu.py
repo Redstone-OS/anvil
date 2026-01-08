@@ -25,15 +25,21 @@ class QemuRunner:
         Hardcoded para garantir fidelidade total ao pedido do usuário.
         """
 
+        # Prepara o OVMF_VARS (copia do template se não existir)
+        # O OVMF precisa de CODE (readonly) e VARS (writeable) separados para boot UEFI funcionar
+        ovmf_vars_prep = "cp -n /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd 2>/dev/null; "
+        
         # Lista HARDCODED sem lógica extra
         cmd_parts = [
+            ovmf_vars_prep,
             "qemu-system-x86_64",
             "-enable-kvm",
             "-cpu host",
             "-m 2048M",
             "-smp cpus=4",
-            "-drive file=fat:rw:/mnt/d/Github/RedstoneOS/dist/qemu,format=raw,if=virtio",
-            "-bios /usr/share/qemu/OVMF.fd",
+            "-drive file=fat:rw:/mnt/d/Github/RedstoneOS/dist/qemu,format=raw",
+            "-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
+            "-drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd",
             "-serial stdio",
             "-monitor none",
             "-no-reboot",
