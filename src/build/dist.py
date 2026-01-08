@@ -58,7 +58,7 @@ class DistBuilder:
             raise BuildError("Kernel is required", "dist")
         
         self._create_ignite_cfg()
-        self._create_startup_nsh()
+        # self._create_startup_nsh()
         
         self.log.success(f"dist/qemu ready: {self.paths.dist_qemu}")
         return True
