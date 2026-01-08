@@ -2,6 +2,7 @@ import asyncio
 import sys
 import shutil
 import time
+import msvcrt
 from pathlib import Path
 
 # Adiciona o diretório 'src' ao path do python para permitir imports relativos
@@ -296,8 +297,10 @@ async def main():
             print(f" {Colors.CYAN}[{key}]{Colors.RESET} {name}")
             
         print()
-        choice = input(f"{Colors.BOLD}Opção > {Colors.RESET}").strip().lower()
-        
+        print(f"{Colors.BOLD}Opção > {Colors.RESET}", end="", flush=True)
+        choice = msvcrt.getch().decode("utf-8", errors="ignore").lower()
+        print(choice) # Ecoa a tecla pressionada
+
         if choice == "q": break
         
         print()
@@ -319,10 +322,8 @@ async def main():
         except Exception as e:
             logger.error(f"Exceção Inesperada: {e}")
         
-        try:
-            input("\nPressione Enter para continuar...")
-        except KeyboardInterrupt:
-            pass
+        print(f"\n{Colors.GREY}Pressione qualquer tecla para continuar...{Colors.RESET}")
+        msvcrt.getch()
 
 if __name__ == "__main__":
     try:

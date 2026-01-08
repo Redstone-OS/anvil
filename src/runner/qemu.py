@@ -35,10 +35,10 @@ class QemuRunner:
             "-smp cpus=4,sockets=1,cores=2,threads=2",
             '-drive "file=fat:rw:/mnt/d/Github/RedstoneOS/dist/qemu,format=raw"',
             "-bios /usr/share/qemu/OVMF.fd",
-            "-serial stdio",
+            "-chardev stdio,id=char0,mux=on,logfile=/mnt/d/Github/RedstoneOS/dist/serial.log",
+            "-serial chardev:char0",
             "-vga std",
-            "-s",
-            "-D /mnt/d/Github/RedstoneOS/dist/serial.log"
+            "-s"
         ]
 
         
