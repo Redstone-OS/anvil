@@ -34,22 +34,6 @@ class BootloaderConfig:
 class QemuLogging:
     """Configuração de flags de log do QEMU (-d ...)."""
     flags: list[str] = field(default_factory=lambda: ["cpu_reset", "int", "mmu", "guest_errors", "unimp"])
-    serial_file: str = "../dist/qemu-serial.log"
-
-@dataclass
-class QemuConfig:
-    """Configuração geral de execução do QEMU."""
-    memory: str = "512M"
-    vga_memory: int = 256
-    ovmf: str = "/usr/share/qemu/OVMF.fd"
-    serial: str = "stdio"
-    monitor: str = "none"
-    drive_interface: str = "ide"
-    enable_gdb: bool = False
-    gdb_port: int = 1234
-    extra_args: list[str] = field(default_factory=lambda: ["-no-reboot", "-no-shutdown"])
-    logging: QemuLogging = field(default_factory=QemuLogging)
-    debug_flags: Optional[list[str]] = None
 
 @dataclass
 class AnalysisPattern:
