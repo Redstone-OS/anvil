@@ -2,8 +2,11 @@ import asyncio
 import sys
 import shutil
 import time
-import msvcrt
 from pathlib import Path
+
+# Captura de tecla compatível com Linux/Unix
+import tty
+import termios
 
 # Adiciona o diretório 'src' ao path do python para permitir imports relativos
 sys.path.append(str(Path(__file__).parent))
@@ -264,6 +267,17 @@ class AnvilCLI:
                     logger.error(f"Não foi possível remover {p}: {e}")
         logger.success("Limpo!")
 
+def getch():
+    """Captura uma tecla do terminal (compatível com Linux/Unix)."""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
 def clear_screen():
     """Limpa a tela do terminal."""
     import os
@@ -298,7 +312,7 @@ async def main():
             
         print()
         print(f"{Colors.BOLD}Opção > {Colors.RESET}", end="", flush=True)
-        choice = msvcrt.getch().decode("utf-8", errors="ignore").lower()
+        choice = getch().lower()
         print(choice) # Ecoa a tecla pressionada
 
         if choice == "q": break
@@ -323,7 +337,7 @@ async def main():
             logger.error(f"Exceção Inesperada: {e}")
         
         print(f"\n{Colors.GREY}Pressione qualquer tecla para continuar...{Colors.RESET}")
-        msvcrt.getch()
+        getch()
 
 if __name__ == "__main__":
     try:

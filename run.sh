@@ -1,20 +1,49 @@
 #!/bin/bash
+# Anvil - RedstoneOS Builder
+# Script de inicialização para Debian/Linux
 
-# Navigate to the script's directory ensuring we are in the project root
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# Set terminal title
-echo -ne "\033]0;Anvil 0.0.5 - RedstoneOS\007"
+# Adiciona src ao PYTHONPATH
+export PYTHONPATH="$SCRIPT_DIR/src"
 
-# Add src to PYTHONPATH so python modules can be found
-export PYTHONPATH="$(pwd)/src"
-
-if [ -z "$1" ]; then
-    # No arguments provided: Run the Interactive TUI
-    # We explicitly insert the path to ensure imports work correctly
-    python3 -c "import sys; sys.path.insert(0, '$(pwd)/src'); from tui import run_tui; run_tui()"
-else
-    # Arguments provided: Run in CLI mode
-    # python -m cli allows running the cli module directly
-    python3 -m cli "$@"
+# Verifica Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "Erro: Python 3 não está instalado."
+    exit 1
 fi
+
+# Verifica se python3-venv está instalado
+if ! python3 -m venv --help &> /dev/null; then
+    echo "Erro: python3-venv não instalado."
+    echo "Instale com: sudo apt install python3.13-venv"
+    exit 1
+fi
+
+# Cria o virtual environment se não existir
+if [ ! -d "$SCRIPT_DIR/venv" ]; then
+    echo "Criando virtual environment..."
+    python3 -m venv venv
+    if [ $? -ne 0 ]; then
+        echo "Falha ao criar venv."
+        exit 1
+    fi
+fi
+
+# Ativa o venv
+source venv/bin/activate
+
+# Atualiza pip
+pip install --upgrade pip
+
+# Instala dependências
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt
+else
+    # Se não houver requirements, instala toml manualmente
+    pip install toml
+fi
+
+# Roda o Anvil
+exec python src/main.py "$@"
