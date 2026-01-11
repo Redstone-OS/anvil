@@ -169,24 +169,45 @@ class AnvilCLI:
 
     async def listen_serial(self):
         """Modo standalone de escuta serial."""
-        logger.info("Aguardando conexão Serial Pipe...")
-        
-        def on_line(line):
-            print(line, end="")
-            
-        listener = PipeListener(r"\\.\pipe\VBoxCom1", on_line=on_line)
-        await listener.start()
-        
-        logger.info("Monitor Serial Ativo. Pressione Ctrl+C para sair.")
+        serial_log = self.paths.dist / "qemu-serial.log"
+
+        if not serial_log.exists():
+            logger.error(f"Arquivo serial não encontrado: {serial_log}")
+            logger.info("Execute o QEMU primeiro (opção 9) para gerar o log serial.")
+            input("\nPressione ENTER para continuar...")
+            return
+
+        logger.info(f"Monitorando: {serial_log}")
+        logger.info("Pressione Ctrl+C para sair.\n")
+
         try:
+            # Usa tail -f para seguir o arquivo em tempo real
+            process = await asyncio.create_subprocess_exec(
+                "tail", "-f", str(serial_log),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+
+            # Lê e exibe linhas coloridas
             while True:
-                await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            pass
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode('utf-8', errors='replace')
+                colored = SerialColorizer.colorize(text)
+                print(colored, end='')
+
         except KeyboardInterrupt:
             pass
+        except asyncio.CancelledError:
+            pass
         finally:
-            listener.stop()
+            if 'process' in locals():
+                try:
+                    process.terminate()
+                    await process.wait()
+                except:
+                    pass
             logger.info("Parado.")
 
     async def statistics(self):

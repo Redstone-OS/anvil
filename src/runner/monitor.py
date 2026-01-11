@@ -69,13 +69,13 @@ class QemuMonitor:
         """Callback chamado para cada nova linha de log."""
         
         # O StreamCapture lê tudo do stdout do QEMU como "SERIAL".
-        # Porém, como usamos '2>&1', logs de debug do QEMU (-d int,cpu...) também vêm por aqui.
+        # Porém, como usamos stderr -> stdout, logs de debug do QEMU (-d int,cpu...) também vêm por aqui.
         # Precisamos filtrar para mostrar APENAS o que parece ser serial do SO (ANSI color formatado ou texto limpo)
         # Logs de CPU geralmente começam com códigos hex ou abreviações específicas (EAX=, Servicing, etc)
         # O User quer apenas o que o SerialColorizer processa ou o que foi limpo.
-        
+
         if self.show_serial and entry.source == StreamSource.SERIAL:
-            # O output agora deve vir limpo do QEMU/WSL (Debug -> /dev/null)
+            # O output vem direto do QEMU no Linux
             # Apenas aplicamos cores
             colored = SerialColorizer.colorize(entry.line)
             if colored.strip():

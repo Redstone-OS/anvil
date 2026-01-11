@@ -1,80 +1,94 @@
-# Anvil - Ferramenta de Build do RedstoneOS
+# Anvil - RedstoneOS Builder
 
-O **Anvil** é a ferramenta de automação de build e execução para o RedstoneOS. Ele foi projetado para simplificar o fluxo de desenvolvimento, gerenciando compilação, criação de imagens de disco e execução no emulador QEMU.
+Sistema de build e execução para o RedstoneOS, adaptado para rodar nativamente no Debian/Linux.
 
-Esta é a versão **v2 (Refatorada)**, focada em simplicidade, desempenho e remoção de dependências pesadas de UI.
+## Dependências
 
-## 🚀 Funcionalidades
+### Necessárias para Build:
+```bash
+# Rust e Cargo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-- **Menu Interativo CLI**: Interface de texto simples e rápida.
-- **Build Modular**: Compila Kernel, Bootloader, Serviços e Apps individualmente ou em conjunto.
-- **Perfis de Build**:
-  - `Release`: Build padrão otimizada.
-  - `Release Limpo`: Remove tracers de debug do Kernel.
-  - `Otimizado`: Build de produção agressiva.
-- **Geração de Imagem**: Cria imagens `.vdi` (VirtualBox) e `.raw` prontas para boot.
-- **Integração WSL**: Executa comandos de sistema (dd, tar, qemu) via WSL 2 para compatibilidade total com ferramentas Linux.
-- **Monitoramento**:
-  - Execução do QEMU com captura de logs em tempo real.
-  - Colorização automática da saída serial.
-  - Detecção automática de **Crashes** (Page Faults, GP, etc).
-
-## 📋 Pré-requisitos
-
-- **Windows 10/11** com **WSL 2** instalado e configurado (Ubuntu/Debian recomendado).
-- **Python 3.10+**
-- **Rust / Cargo** (nightly para o RedstoneOS).
-- **QEMU** instalado no ambiente WSL (`qemu-system-x86_64`).
-- **Ferramentas de disco**: `mtools`, `dosfstools` no WSL.
-
-## 🛠️ Instalação
-
-1. Instale a dependência Python (apenas `toml` é necessário agora):
-   ```cmd
-   pip install -r requirements.txt
-   ```
-
-## ▶️ Como Usar
-
-Para iniciar o menu interativo:
-
-```cmd
-run.bat
+# Python 3 e pip
+sudo apt install python3 python3-pip python3-venv
 ```
 
-Ou diretamente via Python:
-
-```cmd
-python src/main.py
+### Necessárias para execução no QEMU:
+```bash
+sudo apt install qemu-system-x86 ovmf
 ```
 
-### Opções do Menu
+## Verificação de Dependências
 
-- `[1] Release`: Compila tudo (Kernel + Bootloader + Userspace) e prepara a pasta `dist`.
-- `[2] Release Limpo`: Similar ao Release, mas compila o Kernel sem features de debug pesadas.
-- `[3] Release Otimizado`: Build com otimizações máximas (LTO, opt-level=3).
-- `[8] Gerar VDI`: Pack da pasta `dist` em uma imagem de disco VirtualBox.
-- `[9] QEMU`: Inicia o emulador. A saída serial será mostrada no terminal.
-- `[0] Monitor Serial`: Conecta-se ao pipe serial (útil se rodar VirtualBox separadamente).
+Execute o script de verificação:
+```bash
+./check_deps.sh
+```
 
-## 📂 Estrutura do Projeto
+## Uso
+
+Execute o Anvil:
+```bash
+./run.sh
+```
+
+O script irá:
+1. Criar automaticamente um ambiente virtual Python (venv)
+2. Instalar as dependências Python necessárias
+3. Executar o menu interativo do Anvil
+
+## Menu do Anvil
+
+- **[1] Release**: Build completo em modo release
+- **[2] Release Limpo**: Build sem tracers (produção)
+- **[3] Release Otimizado**: Build com otimizações máximas
+- **[4] Kernel**: Compila apenas o kernel
+- **[5] Bootloader**: Compila apenas o bootloader
+- **[6] Serviços**: Compila os serviços
+- **[7] Apps**: Compila as aplicações
+- **[8] Gerar VDI**: Cria imagem VirtualBox
+- **[9] QEMU**: Executa o sistema no QEMU
+- **[0] Monitor Serial**: Monitor de saída serial
+- **[s] Estatísticas**: Mostra estatísticas do projeto
+- **[c] Limpar Build**: Limpa diretórios de build
+- **[q] Sair**: Sai do Anvil
+
+## Estrutura
 
 ```
 anvil/
 ├── src/
-│   ├── build/        # Scripts de empacotamento (dist, initfs, image)
-│   ├── core/         # Configurações, logs e caminhos
-│   ├── runner/       # Gerenciamento do QEMU e Serial
-│   └── main.py       # Ponto de entrada da CLI
-├── requirements.txt  # Dependências (apenas toml)
-├── run.bat          # Launcher Windows
-└── anvil.toml       # Configuração global (na raiz do repositório)
+│   ├── main.py          # CLI principal
+│   ├── core/            # Núcleo (config, paths, logger)
+│   ├── build/           # Builders (dist, initramfs, image)
+│   └── runner/          # Executores (QEMU, monitor, serial)
+├── run.sh               # Script de inicialização
+├── check_deps.sh        # Verificação de dependências
+└── requirements.txt     # Dependências Python
 ```
 
-## 🔧 Configuração
+## Adaptações para Linux
 
-O comportamento do Anvil é controlado pelo arquivo `anvil.toml` na raiz do repositório `RedstoneOS`. Nele você pode ajustar:
-- Memória do QEMU.
-- Caminhos dos componentes.
-- Flags de debug do QEMU.
-- Configurações do Bootloader.
+As seguintes mudanças foram feitas para rodar no Debian:
+
+1. **main.py**: Substituído `msvcrt` (Windows) por `termios`/`tty` (Linux)
+2. **runner/qemu.py**: Removido WSL, executa QEMU nativamente
+3. **run.sh**: Melhorado com venv e instalação automática de dependências
+4. **Caminhos OVMF**: Detecta automaticamente o caminho correto do firmware UEFI
+
+## Troubleshooting
+
+### QEMU não inicia
+Verifique se KVM está disponível:
+```bash
+ls /dev/kvm
+```
+
+Se não existir, você pode executar sem KVM removendo `-enable-kvm` do comando QEMU em `src/runner/qemu.py`.
+
+### Erro de permissão no /dev/kvm
+Adicione seu usuário ao grupo kvm:
+```bash
+sudo usermod -aG kvm $USER
+# Faça logout e login novamente
+```
